@@ -18,6 +18,7 @@ import numpy as np
 import sklearn
 
 from app.knowledge.profiles import PROFILES, get_profile
+from app.learning.exporter import export_crop_models, get_or_create_signing_key
 from app.learning.features import build, to_store
 from app.learning.lora import LowRankCropAdapter
 from app.learning.quality import assess
@@ -57,6 +58,9 @@ class TrainerConfig:
     separate_process: bool = True
     smartpot_ai_url: str = "http://ai-smartpot:8000"
     smartpot_ai_token: str = "demo-ai-token-for-local-use-only"
+    database_url: str | None = None
+    model_export_onnx: bool = True
+    model_signing_key_path: str | None = None
 
 
 def fit_type(crop_type: str, series: Series, min_samples: int, current: TypeState | None) -> TypeState:
@@ -86,8 +90,12 @@ def fit_type(crop_type: str, series: Series, min_samples: int, current: TypeStat
 class TrainerService:
     def __init__(self, config: TrainerConfig):
         self.config = config
-        self.store = ReadingStore(config.data_dir)
+        self.store = ReadingStore(config.data_dir, database_url=config.database_url)
         self.models_dir = Path(config.data_dir) / "models" if self.store.persistent else None
+        key_path = Path(config.model_signing_key_path) if config.model_signing_key_path else (
+            self.models_dir / "ed25519_private.pem" if self.models_dir else None
+        )
+        self._signing_key = get_or_create_signing_key(key_path)
         self.types: dict[str, TypeState] = {}
         self.training: set[str] = set()
         self._lock = threading.Lock()
@@ -216,6 +224,12 @@ class TrainerService:
         temporary = target.with_suffix(".tmp")
         joblib.dump({"sklearn": sklearn.__version__, "state": state}, temporary)
         temporary.replace(target)
+
+        if self.config.model_export_onnx:
+            try:
+                export_crop_models(self.models_dir, crop_type, state, self._signing_key)
+            except Exception as error:  # noqa: BLE001
+                log.warning("Fallo en exportación de modelos ONNX firmados para %s: %s", crop_type, error)
 
     def _load(self) -> None:
         if self.models_dir is None or not self.models_dir.exists():
