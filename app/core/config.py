@@ -24,6 +24,14 @@ class TrainerSettings(BaseSettings):
         "http://ai-smartpot:8000",
         description="URL base de SmartPot-AI para disparar recarga de modelos",
     )
+    ai_grpc_socket: str = Field(
+        "/var/run/smartpot/ai.sock",
+        description="Socket Unix gRPC hacia SmartPot-AI",
+    )
+    valkey_socket: str = Field(
+        "/var/run/smartpot/valkey.sock",
+        description="Socket Unix hacia Valkey",
+    )
     docs_enabled: bool = False
     log_level: str = "INFO"
     model_seed: int = 42
