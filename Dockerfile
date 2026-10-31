@@ -1,4 +1,4 @@
-FROM python:3.13-slim-bookworm AS build
+FROM python:3.15-slim-bookworm AS build
 
 RUN apt-get update && apt-get upgrade -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
@@ -16,7 +16,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY app ./app
 
-FROM python:3.13-slim-bookworm
+FROM python:3.15-slim-bookworm
 
 RUN apt-get update && apt-get upgrade -y --no-install-recommends && rm -rf /var/lib/apt/lists/*
 
