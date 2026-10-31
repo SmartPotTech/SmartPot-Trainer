@@ -57,8 +57,9 @@ class TrainerConfig:
     training_rows: int = 12_000
     separate_process: bool = True
     smartpot_ai_url: str = "http://ai-smartpot:8000"
-    smartpot_ai_token: str = "demo-ai-token-for-local-use-only"
+    smartpot_ai_token: str = ""
     database_url: str | None = None
+    timezone: str = "America/Bogota"
     model_export_onnx: bool = True
     model_signing_key_path: str | None = None
 
@@ -90,7 +91,7 @@ def fit_type(crop_type: str, series: Series, min_samples: int, current: TypeStat
 class TrainerService:
     def __init__(self, config: TrainerConfig):
         self.config = config
-        self.store = ReadingStore(config.data_dir, database_url=config.database_url)
+        self.store = ReadingStore(config.data_dir, database_url=config.database_url, timezone=config.timezone)
         self.models_dir = Path(config.data_dir) / "models" if self.store.persistent else None
         key_path = Path(config.model_signing_key_path) if config.model_signing_key_path else (
             self.models_dir / "ed25519_private.pem" if self.models_dir else None

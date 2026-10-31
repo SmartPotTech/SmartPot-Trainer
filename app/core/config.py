@@ -9,7 +9,6 @@ class TrainerSettings(BaseSettings):
 
     # Autenticación: token compartido con la API y SmartPot-AI
     smartpot_trainer_token: str = Field(
-        "demo-ai-token-for-local-use-only",
         min_length=16,
         description="Token de autenticación Bearer para las rutas de entrenamiento",
     )
@@ -38,7 +37,9 @@ class TrainerSettings(BaseSettings):
 
     # Directorio de datos y modelos compartidos
     data_dir: str = "data"
-    database_url: str | None = Field(None, description="Cadena de conexión ADBC/PostgreSQL hacia TimescaleDB")
+    database_url: str | None = Field(None, description="Cadena ADBC/PostgreSQL hacia TimescaleDB (rol de solo lectura)")
+    # Misma zona que usa la API (AI_TIMEZONE) para la hora local de cada lectura.
+    ai_timezone: str = "America/Bogota"
     model_export_onnx: bool = Field(True, description="Exportar modelos Champion a formato ONNX firmado")
     model_signing_key_path: str | None = Field(None, description="Ruta a clave privada Ed25519")
 

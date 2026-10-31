@@ -29,6 +29,7 @@ def create_app() -> FastAPI:
                 smartpot_ai_url=settings.smartpot_ai_url,
                 smartpot_ai_token=settings.notify_token,
                 database_url=settings.database_url,
+                timezone=settings.ai_timezone,
                 model_export_onnx=settings.model_export_onnx,
                 model_signing_key_path=settings.model_signing_key_path,
             )

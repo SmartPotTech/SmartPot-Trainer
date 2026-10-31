@@ -7,6 +7,7 @@ escribir, el almacén trabaja en memoria y el aprendizaje se pierde al reiniciar
 
 import hashlib
 import logging
+import re
 import sqlite3
 import threading
 import time
@@ -16,7 +17,21 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
+from app.knowledge.profiles import PROFILES
+
 log = logging.getLogger(__name__)
+
+# Solo los cultivos reales enseñan: los virtuales son datos del simulador.
+_REAL_ONLY = "c.kind = 'REAL'"
+_TIMEZONE = re.compile(r"^[A-Za-z]+(?:[/_+-][A-Za-z0-9]+)*$")
+
+
+def _checked_timezone(name: str) -> str:
+    """Valida el nombre de la zona horaria antes de usarlo en el SQL; PostgreSQL comprueba que exista."""
+    if not _TIMEZONE.match(name):
+        raise ValueError(f"Zona horaria inválida: {name}")
+    return name
+
 
 COLUMNS = ("temperature", "humidity", "brightness", "ph", "tds", "atmosphere", "soil_moisture")
 SCHEMA = f"""
@@ -63,13 +78,31 @@ class Series:
 
 
 class ReadingStore:
-    def __init__(self, data_dir: str | Path | None, database_url: str | None = None):
+    def __init__(self, data_dir: str | Path | None, database_url: str | None = None, timezone: str = "America/Bogota"):
         self.path = self._resolve(data_dir)
         self.database_url = database_url
+        self.timezone = _checked_timezone(timezone)
+        self._source_logged = False
         self._lock = threading.Lock()
         self._connection = sqlite3.connect(self.path or ":memory:", check_same_thread=False)
         self._connection.executescript(SCHEMA)
         self._connection.commit()
+
+    def _adbc(self, query: str) -> pl.DataFrame | None:
+        """Ejecuta una consulta de solo lectura en TimescaleDB y la devuelve como DataFrame (Arrow sin copias)."""
+        try:
+            import adbc_driver_postgresql.dbapi as adbc_dbapi
+
+            with adbc_dbapi.connect(self.database_url) as conn, conn.cursor() as cur:
+                cur.execute(query)
+                df = pl.from_arrow(cur.fetch_arrow_table())
+        except Exception as error:  # noqa: BLE001
+            log.warning("TimescaleDB no disponible por ADBC (%s); se usa el almacén local", error)
+            return None
+        if not self._source_logged:
+            log.info("Fuente de entrenamiento: TimescaleDB (solo cultivos reales)")
+            self._source_logged = True
+        return df  # type: ignore[return-value]
 
     @property
     def persistent(self) -> bool:
@@ -113,26 +146,14 @@ class ReadingStore:
 
     def counts(self) -> dict[str, dict[str, float]]:
         if self.database_url:
-            try:
-                import adbc_driver_postgresql.dbapi as adbc_dbapi
-
-                query = (
-                    "SELECT c.type, COUNT(r.id), COUNT(DISTINCT r.crop_id), "
-                    "EXTRACT(EPOCH FROM MAX(r.measured_at)) "
-                    "FROM readings r JOIN crops c ON r.crop_id = c.id "
-                    "GROUP BY c.type"
-                )
-                with adbc_dbapi.connect(self.database_url) as conn, conn.cursor() as cur:
-                    cur.execute(query)
-                    table = cur.fetch_arrow_table()
-                    if table.num_rows > 0:
-                        df = pl.from_arrow(table)
-                        return {
-                            row[0]: {"readings": row[1], "crops": row[2], "last_received": row[3]}
-                            for row in df.iter_rows()
-                        }
-            except Exception as error:  # noqa: BLE001
-                log.debug("Counts ADBC no disponible (%s); usando almacén local", error)
+            df = self._adbc(
+                "SELECT c.type, COUNT(*), COUNT(DISTINCT r.crop_id), EXTRACT(EPOCH FROM MAX(r.measured_at)) "
+                f"FROM readings r JOIN crops c ON r.crop_id = c.id WHERE {_REAL_ONLY} GROUP BY c.type"
+            )
+            if df is not None and not df.is_empty():
+                return {
+                    row[0]: {"readings": row[1], "crops": row[2], "last_received": row[3]} for row in df.iter_rows()
+                }
 
         with self._lock:
             rows = self._connection.execute(
@@ -147,32 +168,22 @@ class ReadingStore:
 
     def load_df(self, crop_type: str, limit: int) -> pl.DataFrame:
         """Las `limit` lecturas más recientes de la especie directamente en un DataFrame de Polars.
-        Intenta leer directamente desde TimescaleDB vía ADBC si database_url está configurada,
-        con fallback transparente al almacén SQLite local/en memoria."""
-        if self.database_url:
-            try:
-                import adbc_driver_postgresql.dbapi as adbc_dbapi
-
-                cols = ", ".join(f"r.{c}" for c in COLUMNS)
-                query = (
-                    f"SELECT r.crop_id AS crop_key, "
-                    f"EXTRACT(EPOCH FROM r.measured_at) AS measured_at, "
-                    f"EXTRACT(HOUR FROM r.measured_at)::INTEGER AS local_hour, "
-                    f"{cols} "
-                    f"FROM readings r "
-                    f"JOIN crops c ON r.crop_id = c.id "
-                    f"WHERE c.type = '{crop_type}' "
-                    f"ORDER BY r.measured_at DESC "
-                    f"LIMIT {limit}"
+        Con `database_url` lee de TimescaleDB vía ADBC (solo cultivos reales, id seudonimizado y hora local);
+        si no, o si falla, usa el almacén SQLite local/en memoria."""
+        if self.database_url and crop_type in PROFILES:
+            cols = ", ".join(f"r.{c}" for c in COLUMNS)
+            df = self._adbc(
+                f"SELECT r.crop_id AS crop_key, EXTRACT(EPOCH FROM r.measured_at) AS measured_at, "
+                f"EXTRACT(HOUR FROM r.measured_at AT TIME ZONE '{self.timezone}')::INTEGER AS local_hour, {cols} "
+                f"FROM readings r JOIN crops c ON r.crop_id = c.id "
+                f"WHERE c.type = '{crop_type}' AND {_REAL_ONLY} "
+                f"ORDER BY r.measured_at DESC LIMIT {int(limit)}"
+            )
+            if df is not None and not df.is_empty():
+                df = df.with_columns(
+                    pl.col("crop_key").map_elements(lambda value: crop_key(value.strip()), return_dtype=pl.Utf8)
                 )
-                with adbc_dbapi.connect(self.database_url) as conn, conn.cursor() as cur:
-                    cur.execute(query)
-                    table = cur.fetch_arrow_table()
-                    if table.num_rows > 0:
-                        df = pl.from_arrow(table)
-                        return df.sort(["crop_key", "measured_at"])
-            except Exception as error:  # noqa: BLE001
-                log.debug("Consulta ADBC hacia TimescaleDB no disponible (%s); utilizando SQLite local", error)
+                return df.sort(["crop_key", "measured_at"])
 
         columns = ", ".join(COLUMNS)
         query = (
