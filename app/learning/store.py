@@ -147,7 +147,8 @@ class ReadingStore:
     def counts(self) -> dict[str, dict[str, float]]:
         if self.database_url:
             df = self._adbc(
-                "SELECT c.type, COUNT(*), COUNT(DISTINCT r.crop_id), EXTRACT(EPOCH FROM MAX(r.measured_at)) "
+                "SELECT c.type AS crop_type, COUNT(*) AS readings, COUNT(DISTINCT r.crop_id) AS crops, "
+                "EXTRACT(EPOCH FROM MAX(r.measured_at))::double precision AS last_received "
                 f"FROM readings r JOIN crops c ON r.crop_id = c.id WHERE {_REAL_ONLY} GROUP BY c.type"
             )
             if df is not None and not df.is_empty():
@@ -173,7 +174,7 @@ class ReadingStore:
         if self.database_url and crop_type in PROFILES:
             cols = ", ".join(f"r.{c}" for c in COLUMNS)
             df = self._adbc(
-                f"SELECT r.crop_id AS crop_key, EXTRACT(EPOCH FROM r.measured_at) AS measured_at, "
+                f"SELECT r.crop_id AS crop_key, EXTRACT(EPOCH FROM r.measured_at)::double precision AS measured_at, "
                 f"EXTRACT(HOUR FROM r.measured_at AT TIME ZONE '{self.timezone}')::INTEGER AS local_hour, {cols} "
                 f"FROM readings r JOIN crops c ON r.crop_id = c.id "
                 f"WHERE c.type = '{crop_type}' AND {_REAL_ONLY} "
