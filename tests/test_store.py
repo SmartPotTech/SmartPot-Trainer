@@ -1,5 +1,7 @@
 import tempfile
 
+import pytest
+
 from app.learning.store import ReadingStore
 from tests.learning_data import lettuce_series
 
@@ -59,3 +61,15 @@ def test_reading_store_persistent():
         assert removed > 0
         assert store.total() <= len(r1)
         store.close()
+
+
+def test_timezone_rejects_sql_injection():
+    from app.learning.store import _checked_timezone
+
+    with pytest.raises(ValueError):
+        _checked_timezone("America/Bogota'; DROP TABLE crops; --")
+
+
+def test_unknown_crop_type_never_reaches_timescale():
+    store = ReadingStore(None, database_url="postgresql://invalid", timezone="UTC")
+    assert store.load_df("LETTUCE' OR '1'='1", 10).is_empty()
