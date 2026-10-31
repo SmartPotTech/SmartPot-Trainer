@@ -63,8 +63,9 @@ class Series:
 
 
 class ReadingStore:
-    def __init__(self, data_dir: str | Path | None):
+    def __init__(self, data_dir: str | Path | None, database_url: str | None = None):
         self.path = self._resolve(data_dir)
+        self.database_url = database_url
         self._lock = threading.Lock()
         self._connection = sqlite3.connect(self.path or ":memory:", check_same_thread=False)
         self._connection.executescript(SCHEMA)
@@ -111,6 +112,28 @@ class ReadingStore:
             return self._connection.total_changes - before
 
     def counts(self) -> dict[str, dict[str, float]]:
+        if self.database_url:
+            try:
+                import adbc_driver_postgresql.dbapi as adbc_dbapi
+
+                query = (
+                    "SELECT c.type, COUNT(r.id), COUNT(DISTINCT r.crop_id), "
+                    "EXTRACT(EPOCH FROM MAX(r.measured_at)) "
+                    "FROM readings r JOIN crops c ON r.crop_id = c.id "
+                    "GROUP BY c.type"
+                )
+                with adbc_dbapi.connect(self.database_url) as conn, conn.cursor() as cur:
+                    cur.execute(query)
+                    table = cur.fetch_arrow_table()
+                    if table.num_rows > 0:
+                        df = pl.from_arrow(table)
+                        return {
+                            row[0]: {"readings": row[1], "crops": row[2], "last_received": row[3]}
+                            for row in df.iter_rows()
+                        }
+            except Exception as error:  # noqa: BLE001
+                log.debug("Counts ADBC no disponible (%s); usando almacén local", error)
+
         with self._lock:
             rows = self._connection.execute(
                 "SELECT crop_type, COUNT(*), COUNT(DISTINCT crop_key), MAX(received_at) FROM readings "
@@ -123,7 +146,34 @@ class ReadingStore:
             return int(self._connection.execute("SELECT COUNT(*) FROM readings").fetchone()[0])
 
     def load_df(self, crop_type: str, limit: int) -> pl.DataFrame:
-        """Las `limit` lecturas más recientes de la especie directamente en un DataFrame de Polars."""
+        """Las `limit` lecturas más recientes de la especie directamente en un DataFrame de Polars.
+        Intenta leer directamente desde TimescaleDB vía ADBC si database_url está configurada,
+        con fallback transparente al almacén SQLite local/en memoria."""
+        if self.database_url:
+            try:
+                import adbc_driver_postgresql.dbapi as adbc_dbapi
+
+                cols = ", ".join(f"r.{c}" for c in COLUMNS)
+                query = (
+                    f"SELECT r.crop_id AS crop_key, "
+                    f"EXTRACT(EPOCH FROM r.measured_at) AS measured_at, "
+                    f"EXTRACT(HOUR FROM r.measured_at)::INTEGER AS local_hour, "
+                    f"{cols} "
+                    f"FROM readings r "
+                    f"JOIN crops c ON r.crop_id = c.id "
+                    f"WHERE c.type = '{crop_type}' "
+                    f"ORDER BY r.measured_at DESC "
+                    f"LIMIT {limit}"
+                )
+                with adbc_dbapi.connect(self.database_url) as conn, conn.cursor() as cur:
+                    cur.execute(query)
+                    table = cur.fetch_arrow_table()
+                    if table.num_rows > 0:
+                        df = pl.from_arrow(table)
+                        return df.sort(["crop_key", "measured_at"])
+            except Exception as error:  # noqa: BLE001
+                log.debug("Consulta ADBC hacia TimescaleDB no disponible (%s); utilizando SQLite local", error)
+
         columns = ", ".join(COLUMNS)
         query = (
             f"SELECT crop_key, measured_at, local_hour, {columns} FROM "

@@ -30,6 +30,9 @@ class TrainerSettings(BaseSettings):
 
     # Directorio de datos y modelos compartidos
     data_dir: str = "data"
+    database_url: str | None = Field(None, description="Cadena de conexión ADBC/PostgreSQL hacia TimescaleDB")
+    model_export_onnx: bool = Field(True, description="Exportar modelos Champion a formato ONNX firmado")
+    model_signing_key_path: str | None = Field(None, description="Ruta a clave privada Ed25519")
 
     # Parámetros de entrenamiento
     learning_min_samples: int = Field(200, ge=50)

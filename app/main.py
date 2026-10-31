@@ -28,6 +28,9 @@ def create_app() -> FastAPI:
                 separate_process=settings.learning_separate_process,
                 smartpot_ai_url=settings.smartpot_ai_url,
                 smartpot_ai_token=settings.notify_token,
+                database_url=settings.database_url,
+                model_export_onnx=settings.model_export_onnx,
+                model_signing_key_path=settings.model_signing_key_path,
             )
         )
         app.state.service.start()
