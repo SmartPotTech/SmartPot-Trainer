@@ -101,3 +101,21 @@ La imagen de producción utiliza construcción multietapa basada en `python:3.13
 ```bash
 docker build -t ghcr.io/smartpottech/smartpot-trainer:latest .
 ```
+
+---
+
+## 6. Plan de Maximización Industrial: Ingesta ADBC Arrow Directa y Exportador ONNX Firmado
+
+Como parte del **Plan Maestro de Maximización del Stack B (demo-beta)**, `SmartPot-Trainer` evoluciona hacia una arquitectura analítica zero-copy de alto rendimiento:
+
+1. **Eliminación Total de SQLite**:
+   - Se erradica `sqlite3` y la duplicación de telemetría en disco local.
+   - Ingesta analítica directa desde TimescaleDB mediante `adbc-driver-postgresql` y `pyarrow`, recibiendo bloques binarios Apache Arrow directamente en `pl.from_arrow()` (`Polars LazyFrame`) sin copias intermedias en memoria de Python.
+2. **Pipeline Vectorizado en Polars**:
+   - Filtrado físico intercuartílico (IQR), cálculo de métricas DQS, ventanas móviles (`rolling_mean`, `rolling_std`) y generación de etiquetas autosupervisadas (`shift(-6).over("crop_key")`) ejecutados íntegramente en el motor multihilo de Polars.
+3. **Entrenamiento en Dos Velocidades**:
+   - **Ruta Rápida (Fast-Path LoRA)**: Cada 250 lecturas nuevas por especie, actualiza analíticamente por gradiente las matrices de bajo rango $B_s \in \mathbb{R}^{d \times r}$ y $A_s \in \mathbb{R}^{r \times k}$ ($r=2$) en menos de 1 ms sin tocar los pesos base $W_0$.
+   - **Ruta Profunda (Slow-Path)**: Torneo Champion-Challenger con `TimeSeriesSplit(n_splits=4)` sobre candidatos Scikit-Learn paralelizados con `joblib` sobre `/dev/shm`.
+4. **Exportación Estandarizada y Firma Criptográfica**:
+   - Conversión del modelo campeón a `.onnx` mediante `skl2onnx` y empaquetado de pesos LoRA en estructura binaria alineada.
+   - Cálculo de digest **BLAKE3** y firma con clave privada **Ed25519**, escritura atómica (`write temp` + `os.replace`) y notificación de recarga caliente a `SmartPot-AI` mediante Valkey Pub/Sub (`smartpot:ai:reload`).
