@@ -78,6 +78,20 @@ Para garantizar que el servicio de inferencia (`SmartPot-AI`) mantenga latencias
 
 ## 4. Ejecución y Desarrollo Local
 
+### Despliegue en un comando
+
+La imagen es pública: `ghcr.io/smartpottech/smartpot-trainer`. La plataforma completa, con este servicio incluido, se
+levanta con un solo comando y sin descargar el código:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SmartPotTech/.github/main/docker/demo-beta/compose.yaml | docker compose -f - up -d --wait
+```
+
+Abre http://localhost:5173 e ingresa con `demo@smartpot.app` / `SmartPot2026`. Se detiene con
+`docker compose -p smartpot-demo-beta down` (con `-v` borra también los datos). Más detalle en la
+[demo beta](https://github.com/SmartPotTech/.github/tree/main/docker/demo-beta).
+
+
 ```bash
 # Sincronizar dependencias con uv
 uv sync
@@ -99,23 +113,18 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 La imagen de producción utiliza construcción multietapa basada en `python:3.13-slim-bookworm` y `uv`, ejecutándose bajo usuario no privilegiado (`1000:1000`):
 
 ```bash
-docker build -t ghcr.io/smartpottech/smartpot-trainer:latest .
+docker pull ghcr.io/smartpottech/smartpot-trainer:latest
 ```
 
 ---
 
-## 6. Plan de Maximización Industrial: Ingesta ADBC Arrow Directa y Exportador ONNX Firmado
+## 6. Estado del plan de rendimiento
 
-Como parte del **Plan Maestro de Maximización del Stack B (demo-beta)**, `SmartPot-Trainer` evoluciona hacia una arquitectura analítica zero-copy de alto rendimiento:
+| Pieza | Estado |
+|-------|--------|
+| Lectura por ADBC (Apache Arrow) desde TimescaleDB | Opcional, con el rol de solo lectura `smartpot_reader`, solo cultivos reales y clave seudonimizada; sin `DATABASE_URL` el entrenador usa su SQLite local, que alimenta la API |
+| Pipeline en Polars | Filtrado, ventanas móviles y etiquetas autosupervisadas |
+| Ruta rápida LoRA y ruta profunda campeón-retador | En el código |
+| Exportación ONNX firmada | `skl2onnx`, hash BLAKE2b y firma Ed25519 del manifiesto; la IA solo verifica la firma si se define `TRUSTED_MODEL_PUBLIC_KEY_HEX` y todavía carga los modelos con `joblib` |
+| Recarga en caliente de la IA por Valkey | Pendiente |
 
-1. **Eliminación Total de SQLite**:
-   - Se erradica `sqlite3` y la duplicación de telemetría en disco local.
-   - Ingesta analítica directa desde TimescaleDB mediante `adbc-driver-postgresql` y `pyarrow`, recibiendo bloques binarios Apache Arrow directamente en `pl.from_arrow()` (`Polars LazyFrame`) sin copias intermedias en memoria de Python.
-2. **Pipeline Vectorizado en Polars**:
-   - Filtrado físico intercuartílico (IQR), cálculo de métricas DQS, ventanas móviles (`rolling_mean`, `rolling_std`) y generación de etiquetas autosupervisadas (`shift(-6).over("crop_key")`) ejecutados íntegramente en el motor multihilo de Polars.
-3. **Entrenamiento en Dos Velocidades**:
-   - **Ruta Rápida (Fast-Path LoRA)**: Cada 250 lecturas nuevas por especie, actualiza analíticamente por gradiente las matrices de bajo rango $B_s \in \mathbb{R}^{d \times r}$ y $A_s \in \mathbb{R}^{r \times k}$ ($r=2$) en menos de 1 ms sin tocar los pesos base $W_0$.
-   - **Ruta Profunda (Slow-Path)**: Torneo Champion-Challenger con `TimeSeriesSplit(n_splits=4)` sobre candidatos Scikit-Learn paralelizados con `joblib` sobre `/dev/shm`.
-4. **Exportación Estandarizada y Firma Criptográfica**:
-   - Conversión del modelo campeón a `.onnx` mediante `skl2onnx` y empaquetado de pesos LoRA en estructura binaria alineada.
-   - Cálculo de digest **BLAKE3** y firma con clave privada **Ed25519**, escritura atómica (`write temp` + `os.replace`) y notificación de recarga caliente a `SmartPot-AI` mediante Valkey Pub/Sub (`smartpot:ai:reload`).
