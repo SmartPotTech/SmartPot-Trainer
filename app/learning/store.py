@@ -1,8 +1,8 @@
-"""Almacén de lecturas reales para el entrenamiento (SQLite en el volumen compartido del servicio).
+"""Real reading store for training (SQLite on the shared service volume).
 
-El id del cultivo se guarda seudonimizado (hash SHA-256): el servicio aprende de la serie de cada
-cultivo sin saber cuál es ni a qué persona pertenece. Si la carpeta de datos no se puede
-escribir, el almacén trabaja en memoria y el aprendizaje se pierde al reiniciar.
+The crop ID is stored pseudonymized (SHA-256 hash): the service learns from each crop's time series
+without knowing which crop it is or who owns it. If the data directory is not writable, the store
+runs in memory and learned state is lost upon restart.
 """
 
 import hashlib
@@ -27,9 +27,9 @@ _TIMEZONE = re.compile(r"^[A-Za-z]+(?:[/_+-][A-Za-z0-9]+)*$")
 
 
 def _checked_timezone(name: str) -> str:
-    """Valida el nombre de la zona horaria antes de usarlo en el SQL; PostgreSQL comprueba que exista."""
+    """Validates the timezone name before interpolating it into SQL; PostgreSQL verifies its existence."""
     if not _TIMEZONE.match(name):
-        raise ValueError(f"Zona horaria inválida: {name}")
+        raise ValueError(f"Invalid timezone: {name}")
     return name
 
 
@@ -63,7 +63,7 @@ class StoredReading:
 
 @dataclass
 class Series:
-    """Lecturas de una especie ordenadas por cultivo y hora; los valores ausentes son NaN."""
+    """Readings for a crop species sorted by crop and timestamp; missing values are NaN."""
 
     crops: np.ndarray
     times: np.ndarray
@@ -89,7 +89,7 @@ class ReadingStore:
         self._connection.commit()
 
     def _adbc(self, query: str) -> pl.DataFrame | None:
-        """Ejecuta una consulta de solo lectura en TimescaleDB y la devuelve como DataFrame (Arrow sin copias)."""
+        """Executes a read-only query on TimescaleDB and returns it as a Polars DataFrame (zero-copy Arrow)."""
         try:
             import adbc_driver_postgresql.dbapi as adbc_dbapi
 
@@ -97,10 +97,10 @@ class ReadingStore:
                 cur.execute(query)
                 df = pl.from_arrow(cur.fetch_arrow_table())
         except Exception as error:  # noqa: BLE001
-            log.warning("TimescaleDB no disponible por ADBC (%s); se usa el almacén local", error)
+            log.warning("TimescaleDB unavailable via ADBC (%s); using local store", error)
             return None
         if not self._source_logged:
-            log.info("Fuente de entrenamiento: TimescaleDB (solo cultivos reales)")
+            log.info("Training source: TimescaleDB (real crops only)")
             self._source_logged = True
         return df  # type: ignore[return-value]
 
@@ -120,11 +120,11 @@ class ReadingStore:
             probe.unlink()
             return str(folder / "learning.db")
         except OSError as error:
-            log.warning("No se puede escribir en %s (%s): el almacén queda en memoria", folder, error)
+            log.warning("Cannot write to %s (%s): store running in memory", folder, error)
             return None
 
     def add(self, readings: list[StoredReading]) -> int:
-        """Guarda las lecturas nuevas; las repetidas (mismo cultivo y hora) se ignoran."""
+        """Stores new readings; duplicates (same crop and timestamp) are ignored."""
         now = time.time()
         rows = [
             (
@@ -168,9 +168,9 @@ class ReadingStore:
             return int(self._connection.execute("SELECT COUNT(*) FROM readings").fetchone()[0])
 
     def load_df(self, crop_type: str, limit: int) -> pl.DataFrame:
-        """Las `limit` lecturas más recientes de la especie directamente en un DataFrame de Polars.
-        Con `database_url` lee de TimescaleDB vía ADBC (solo cultivos reales, id seudonimizado y hora local);
-        si no, o si falla, usa el almacén SQLite local/en memoria."""
+        """Loads the `limit` most recent readings for the species directly into a Polars DataFrame.
+        With `database_url`, reads from TimescaleDB via ADBC (real crops only, pseudonymized ID, and local hour);
+        otherwise, or on failure, falls back to the local/in-memory SQLite store."""
         if self.database_url and crop_type in PROFILES:
             cols = ", ".join(f"r.{c}" for c in COLUMNS)
             df = self._adbc(
@@ -196,7 +196,7 @@ class ReadingStore:
             return pl.read_database(query, self._connection, execute_options={"parameters": (crop_type, limit)})
 
     def load(self, crop_type: str, limit: int) -> Series:
-        """Las `limit` lecturas más recientes de la especie, ordenadas por cultivo y hora."""
+        """Loads the `limit` most recent readings for the species, sorted by crop and timestamp."""
         df = self.load_df(crop_type, limit)
         if df.is_empty():
             empty = np.empty(0)
@@ -214,7 +214,7 @@ class ReadingStore:
             return cursor.rowcount
 
     def prune(self, retention_days: int, max_rows_per_type: int) -> int:
-        """Borra lo más antiguo: por antigüedad y por tope de lecturas por especie."""
+        """Deletes the oldest readings by age and by per-species row cap."""
         cutoff = time.time() - retention_days * 86_400
         with self._lock:
             removed = self._connection.execute("DELETE FROM readings WHERE measured_at < ?", (cutoff,)).rowcount

@@ -1,7 +1,7 @@
-"""Base de conocimiento: rangos óptimos por especie en la escala de los sensores del dispositivo.
+"""Knowledge base: optimal species ranges on the device sensor scale.
 
-La conductividad se expresa en ppm con factor 700 (EC × 700) y la luz en lux relativos del
-sensor del dispositivo (0 a 2000).
+Electrical conductivity is expressed in ppm with factor 700 (EC × 700) and light in relative lux
+from the device sensor (0 to 2000).
 """
 
 from dataclasses import dataclass, field
@@ -9,12 +9,12 @@ from dataclasses import dataclass, field
 PARAMETERS = ("temperature", "humidity", "brightness", "ph", "tds", "soilMoisture")
 
 PHRASES = {
-    "temperature": ("temperatura baja", "temperatura alta"),
-    "humidity": ("aire seco", "aire muy húmedo"),
-    "brightness": ("poca luz", "exceso de luz"),
-    "ph": ("pH bajo", "pH alto"),
-    "tds": ("pocos nutrientes", "exceso de nutrientes"),
-    "soilMoisture": ("sustrato seco", "sustrato encharcado"),
+    "temperature": ("low temperature", "high temperature"),
+    "humidity": ("dry air", "very humid air"),
+    "brightness": ("low light", "excess light"),
+    "ph": ("low pH", "high pH"),
+    "tds": ("low nutrients", "excess nutrients"),
+    "soilMoisture": ("dry substrate", "waterlogged substrate"),
 }
 
 
@@ -32,7 +32,7 @@ class Range:
     label: str
 
     def deviation(self, value: float) -> float:
-        """0 dentro del rango; fuera, la distancia medida en tolerancias."""
+        """Returns 0 within the range; outside, the distance measured in tolerance units."""
         if value < self.min:
             return (self.min - value) / self.tolerance
         if value > self.max:
@@ -64,12 +64,12 @@ def _profile(
         name=name,
         description=description,
         ranges={
-            "temperature": Range(*temperature, tolerance=5.0, unit="°C", label="la temperatura"),
-            "humidity": Range(*humidity, tolerance=15.0, unit="%", label="la humedad del aire"),
-            "brightness": Range(*brightness, tolerance=300.0, unit="lux", label="la luz"),
-            "ph": Range(*ph, tolerance=0.8, unit="pH", label="el pH"),
-            "tds": Range(*tds, tolerance=400.0, unit="ppm", label="el nivel de nutrientes (TDS)"),
-            "soilMoisture": Range(*soil, tolerance=15.0, unit="%", label="la humedad del sustrato"),
+            "temperature": Range(*temperature, tolerance=5.0, unit="°C", label="temperature"),
+            "humidity": Range(*humidity, tolerance=15.0, unit="%", label="air humidity"),
+            "brightness": Range(*brightness, tolerance=300.0, unit="lux", label="light"),
+            "ph": Range(*ph, tolerance=0.8, unit="pH", label="pH"),
+            "tds": Range(*tds, tolerance=400.0, unit="ppm", label="nutrient level (TDS)"),
+            "soilMoisture": Range(*soil, tolerance=15.0, unit="%", label="substrate moisture"),
         },
     )
 
@@ -79,8 +79,8 @@ PROFILES: dict[str, CropProfile] = {
     for profile in (
         _profile(
             "LETTUCE",
-            "Lechuga",
-            "Hoja de clima fresco; se espiga con calor y luz excesiva.",
+            "Lettuce",
+            "Cool-weather leafy green; bolts under heat and excessive light.",
             (15, 22),
             (50, 70),
             (300, 1400),
@@ -90,8 +90,8 @@ PROFILES: dict[str, CropProfile] = {
         ),
         _profile(
             "TOMATO",
-            "Tomate",
-            "Fruto exigente en luz, calor y nutrientes durante la floración.",
+            "Tomato",
+            "Fruiting crop demanding high light, warmth, and nutrients during flowering.",
             (20, 28),
             (60, 80),
             (600, 1800),
@@ -101,8 +101,8 @@ PROFILES: dict[str, CropProfile] = {
         ),
         _profile(
             "STRAWBERRY",
-            "Fresa",
-            "Sensible al exceso de sales y a la humedad alta, que favorece hongos.",
+            "Strawberry",
+            "Sensitive to excess salts and high humidity, which promotes fungal growth.",
             (18, 26),
             (60, 75),
             (500, 1600),
@@ -112,8 +112,8 @@ PROFILES: dict[str, CropProfile] = {
         ),
         _profile(
             "BASIL",
-            "Albahaca",
-            "Aromática de clima cálido; tolera ambientes secos.",
+            "Basil",
+            "Warm-weather aromatic herb; tolerates dry environments.",
             (20, 30),
             (40, 60),
             (500, 1600),
@@ -123,8 +123,8 @@ PROFILES: dict[str, CropProfile] = {
         ),
         _profile(
             "SPINACH",
-            "Espinaca",
-            "Hoja de clima fresco con alta demanda de nitrógeno.",
+            "Spinach",
+            "Cool-weather leafy green with high nitrogen demand.",
             (15, 24),
             (50, 70),
             (300, 1400),
@@ -134,8 +134,8 @@ PROFILES: dict[str, CropProfile] = {
         ),
         _profile(
             "PEPPER",
-            "Pimentón",
-            "Fruto de clima cálido; necesita luz intensa y pH estable.",
+            "Bell pepper",
+            "Warm-weather fruiting crop; requires intense light and stable pH.",
             (21, 29),
             (50, 70),
             (600, 1800),
@@ -150,5 +150,5 @@ PROFILES: dict[str, CropProfile] = {
 def get_profile(crop_type: str) -> CropProfile:
     profile = PROFILES.get(crop_type.upper())
     if profile is None:
-        raise KeyError(f"Tipo de cultivo desconocido: {crop_type}")
+        raise KeyError(f"Unknown crop type: {crop_type}")
     return profile

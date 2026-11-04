@@ -15,7 +15,7 @@ from tests.learning_data import lettuce_series
 def test_train_insufficient_samples():
     card = train_classifier("needs_water", np.empty((10, 10)), np.empty(10), min_samples=200, current=None)
     assert card.status == "PENDING"
-    assert "Faltan lecturas" in card.reason
+    assert "Insufficient readings" in card.reason
 
 
 def test_train_states():

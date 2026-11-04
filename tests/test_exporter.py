@@ -1,4 +1,4 @@
-"""Pruebas unitarias para exportación ONNX, firma Ed25519, integridad BLAKE2b y fallback ADBC."""
+"""Unit tests for ONNX export, Ed25519 signing, BLAKE2b integrity, and ADBC fallback."""
 
 from pathlib import Path
 
@@ -30,17 +30,16 @@ def test_ed25519_key_generation_and_loading(tmp_path: Path):
 
     key2 = get_or_create_signing_key(key_path)
     # Ambas deben tener la misma clave pública
-    assert (
-        key1.public_key().public_bytes_raw()
-        == key2.public_key().public_bytes_raw()
-    )
+    assert key1.public_key().public_bytes_raw() == key2.public_key().public_bytes_raw()
 
 
 def test_export_model_to_onnx(tmp_path: Path):
-    pipe = Pipeline([
-        ("scaler", StandardScaler()),
-        ("clf", LogisticRegression()),
-    ])
+    pipe = Pipeline(
+        [
+            ("scaler", StandardScaler()),
+            ("clf", LogisticRegression()),
+        ]
+    )
     x = np.random.randn(20, 14).astype(np.float32)
     y = np.random.randint(0, 2, size=20)
     pipe.fit(x, y)
@@ -106,7 +105,7 @@ def test_export_crop_models_end_to_end(tmp_path: Path):
 
     card = ModelCard(
         task="needs_water",
-        label="Riego",
+        label="Irrigation",
         metric="f1",
         status="TRAINED",
         estimator=pipe,

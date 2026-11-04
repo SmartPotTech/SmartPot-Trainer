@@ -1,11 +1,11 @@
-"""Entrenamiento con datos reales, en el mismo orden de un proyecto de aprendizaje automático:
+"""Training on real data following the standard machine learning lifecycle:
 
-1. Calidad de datos y exclusión de atípicos.
-2. Etiquetas autosupervisadas (qué pasó en la hora siguiente).
-3. Comparación de modelos con validación cruzada temporal (TimeSeriesSplit), frente a una línea base.
-4. Ajuste de hiperparámetros del mejor con GridSearchCV.
-5. Campeón y retador: el modelo nuevo reemplaza al vigente solo si mejora en las lecturas más recientes.
-6. No supervisado: estados de operación con K-Means (k por silueta) y lecturas atípicas con Isolation Forest.
+1. Data quality assessment and outlier exclusion.
+2. Self-supervised labels (what happened in the following hour).
+3. Model comparison using time-series cross-validation (TimeSeriesSplit) against a baseline.
+4. Hyperparameter tuning of the top candidate via GridSearchCV.
+5. Champion-Challenger: the new model replaces the active one only if it improves on the most recent holdout readings.
+6. Unsupervised: operating states via K-Means (k chosen by silhouette) and outlier detection via Isolation Forest.
 """
 
 import logging
@@ -41,7 +41,7 @@ from app.learning.features import Dataset
 
 log = logging.getLogger(__name__)
 
-BASELINE = "Línea base"
+BASELINE = "Baseline"
 HOLDOUT_SHARE = 0.2
 MIN_POSITIVES = 10
 MAX_CLUSTERS = 6
@@ -50,47 +50,47 @@ SEED = 7
 
 CLASSIFIERS: dict[str, Any] = {
     BASELINE: DummyClassifier(strategy="most_frequent"),
-    "Regresión logística": LogisticRegression(max_iter=1000, class_weight="balanced"),
-    "K vecinos más cercanos": KNeighborsClassifier(n_neighbors=15),
-    "Árbol de decisión": DecisionTreeClassifier(
+    "Logistic regression": LogisticRegression(max_iter=1000, class_weight="balanced"),
+    "K-nearest neighbors": KNeighborsClassifier(n_neighbors=15),
+    "Decision tree": DecisionTreeClassifier(
         max_depth=6, min_samples_leaf=10, class_weight="balanced", random_state=SEED
     ),
-    "Bosque aleatorio": RandomForestClassifier(
+    "Random forest": RandomForestClassifier(
         n_estimators=120, max_depth=8, min_samples_leaf=5, class_weight="balanced", random_state=SEED, n_jobs=1
     ),
     "Gradient boosting": HistGradientBoostingClassifier(max_iter=150, class_weight="balanced", random_state=SEED),
-    "Red neuronal (MLP)": MLPClassifier(
+    "Neural network (MLP)": MLPClassifier(
         hidden_layer_sizes=(16,), alpha=0.01, max_iter=300, early_stopping=True, random_state=SEED
     ),
 }
 CLASSIFIER_GRIDS = {
-    "Regresión logística": {"model__C": [0.1, 1.0, 10.0]},
-    "K vecinos más cercanos": {"model__n_neighbors": [7, 15, 31]},
-    "Árbol de decisión": {"model__max_depth": [4, 6, 10]},
-    "Bosque aleatorio": {"model__max_depth": [6, 10], "model__n_estimators": [80, 160]},
+    "Logistic regression": {"model__C": [0.1, 1.0, 10.0]},
+    "K-nearest neighbors": {"model__n_neighbors": [7, 15, 31]},
+    "Decision tree": {"model__max_depth": [4, 6, 10]},
+    "Random forest": {"model__max_depth": [6, 10], "model__n_estimators": [80, 160]},
     "Gradient boosting": {"model__learning_rate": [0.05, 0.1], "model__max_depth": [None, 4]},
-    "Red neuronal (MLP)": {"model__alpha": [0.001, 0.01]},
+    "Neural network (MLP)": {"model__alpha": [0.001, 0.01]},
 }
 REGRESSORS: dict[str, Any] = {
     BASELINE: DummyRegressor(strategy="mean"),
-    "Regresión ridge": Ridge(alpha=1.0),
-    "K vecinos más cercanos": KNeighborsRegressor(n_neighbors=15),
-    "Bosque aleatorio": RandomForestRegressor(
+    "Ridge regression": Ridge(alpha=1.0),
+    "K-nearest neighbors": KNeighborsRegressor(n_neighbors=15),
+    "Random forest": RandomForestRegressor(
         n_estimators=120, max_depth=8, min_samples_leaf=5, random_state=SEED, n_jobs=1
     ),
     "Gradient boosting": HistGradientBoostingRegressor(max_iter=150, random_state=SEED),
 }
 REGRESSOR_GRIDS = {
-    "Regresión ridge": {"model__alpha": [0.1, 1.0, 10.0]},
-    "K vecinos más cercanos": {"model__n_neighbors": [7, 15, 31]},
-    "Bosque aleatorio": {"model__max_depth": [6, 10], "model__n_estimators": [80, 160]},
+    "Ridge regression": {"model__alpha": [0.1, 1.0, 10.0]},
+    "K-nearest neighbors": {"model__n_neighbors": [7, 15, 31]},
+    "Random forest": {"model__max_depth": [6, 10], "model__n_estimators": [80, 160]},
     "Gradient boosting": {"model__learning_rate": [0.05, 0.1], "model__max_depth": [None, 4]},
 }
 
 TASKS = {
-    "needs_water": "¿Se secará el sustrato en la próxima hora?",
-    "overheat": "¿Pasará la temperatura del máximo en la próxima hora?",
-    "moisture_1h": "Humedad del sustrato dentro de una hora",
+    "needs_water": "Will the substrate dry out in the next hour?",
+    "overheat": "Will the temperature exceed the maximum in the next hour?",
+    "moisture_1h": "Substrate moisture in one hour",
 }
 
 
@@ -103,7 +103,7 @@ class Candidate:
 
 @dataclass
 class ModelCard:
-    """Resultado de una tarea: el modelo vigente y cómo se eligió."""
+    """Task training result: active model and selection metadata."""
 
     task: str
     label: str
@@ -179,26 +179,24 @@ def _split(n: int) -> int:
     return max(1, int(n * (1 - HOLDOUT_SHARE)))
 
 
-def train_classifier(
-    task: str, x: np.ndarray, y: np.ndarray, min_samples: int, current: ModelCard | None
-) -> ModelCard:
+def train_classifier(task: str, x: np.ndarray, y: np.ndarray, min_samples: int, current: ModelCard | None) -> ModelCard:
     card = ModelCard(
         task=task,
         label=TASKS[task],
         status="PENDING",
-        metric="F1 macro",
+        metric="Macro F1",
         samples=int(x.shape[0]),
         positives=int(y.sum()),
     )
     negatives = card.samples - card.positives
     if card.samples < min_samples:
-        card.reason = f"Faltan lecturas con una hora de futuro: hay {card.samples} de {min_samples}."
+        card.reason = f"Insufficient readings with a one-hour future window: {card.samples} of {min_samples}."
         return _keep(card, current)
     if card.positives < MIN_POSITIVES or negatives < MIN_POSITIVES:
-        rare = "positivos" if card.positives < MIN_POSITIVES else "negativos"
+        rare = "positive" if card.positives < MIN_POSITIVES else "negative"
         card.reason = (
-            f"Aún no hay suficientes casos {rare} ({min(card.positives, negatives)} de {MIN_POSITIVES}): "
-            "el modelo aprende cuando la situación ocurre."
+            f"Not enough {rare} cases yet ({min(card.positives, negatives)} of {MIN_POSITIVES}): "
+            "the model learns as the situation occurs."
         )
         return _keep(card, current)
 
@@ -230,11 +228,11 @@ def train_regressor(x: np.ndarray, y: np.ndarray, min_samples: int, current: Mod
         task="moisture_1h",
         label=TASKS["moisture_1h"],
         status="PENDING",
-        metric="Error medio (%)",
+        metric="Mean absolute error (%)",
         samples=int(x.shape[0]),
     )
     if card.samples < min_samples:
-        card.reason = f"Faltan lecturas con su valor una hora después: hay {card.samples} de {min_samples}."
+        card.reason = f"Insufficient readings with a one-hour follow-up value: {card.samples} of {min_samples}."
         return _keep(card, current)
 
     cut = _split(card.samples)
@@ -288,13 +286,11 @@ def _decide(
 ) -> ModelCard:
     beats_baseline = card.holdout > card.baseline if higher else card.holdout < card.baseline
     if not beats_baseline or best.model == BASELINE:
-        card.reason = "Ningún modelo supera a la línea base en las lecturas más recientes; se sigue aprendiendo."
+        card.reason = "No model beat the baseline on the most recent readings; continuing to learn."
         return _keep(card, current)
     if rival is not None and (rival >= card.holdout if higher else rival <= card.holdout):
         current.candidates, current.samples = card.candidates, card.samples
-        current.reason = (
-            f"El modelo vigente sigue siendo mejor en las lecturas recientes ({rival} frente a {card.holdout})."
-        )
+        current.reason = f"The active model remains better on recent readings ({rival} vs {card.holdout})."
         return current
 
     final = clone(tuned).fit(x, y)
@@ -333,7 +329,7 @@ def _round(value: float) -> float:
 
 
 def train_states(positions: np.ndarray, hours: np.ndarray) -> StatesModel | None:
-    """Estados típicos de operación de la especie: K-Means con cantidad de grupos por silueta."""
+    """Typical species operating states: K-Means with cluster count selected by silhouette score."""
     if positions.shape[0] < 60:
         return None
     rng = np.random.default_rng(SEED)
@@ -387,7 +383,7 @@ def train_states(positions: np.ndarray, hours: np.ndarray) -> StatesModel | None
 
 
 def describe(center: np.ndarray, hours: np.ndarray) -> tuple[str, str]:
-    """Nombre corto del estado a partir de su centro y su hora típica."""
+    """Generates a concise operating state name and description from its center and typical hour."""
     deviations = []
     for parameter, value in zip(PARAMETERS, center, strict=True):
         if value < -0.1:
@@ -397,10 +393,10 @@ def describe(center: np.ndarray, hours: np.ndarray) -> tuple[str, str]:
     deviations.sort(reverse=True)
     moment = _moment(hours)
     if not deviations:
-        return f"Condiciones ideales {moment}".strip(), "Todas las variables quedan dentro de su rango ideal."
-    text = " y ".join(name for _, name in deviations[:2])
+        return f"Ideal conditions {moment}".strip(), "All variables remain within their ideal range."
+    text = " and ".join(name for _, name in deviations[:2])
     label = f"{text[0].upper()}{text[1:]} {moment}".strip()
-    return label, "Lo más alejado del ideal: " + ", ".join(name for _, name in deviations) + "."
+    return label, "Furthest from ideal: " + ", ".join(name for _, name in deviations) + "."
 
 
 def _moment(hours: np.ndarray) -> str:
@@ -410,10 +406,10 @@ def _moment(hours: np.ndarray) -> str:
     angle = np.arctan2(np.sin(hours / 24 * 2 * np.pi).mean(), np.cos(hours / 24 * 2 * np.pi).mean())
     typical = (angle / (2 * np.pi) * 24) % 24
     if 6 <= typical < 12:
-        return "en la mañana"
+        return "in the morning"
     if 12 <= typical < 18:
-        return "en la tarde"
-    return "en la noche"
+        return "in the afternoon"
+    return "at night"
 
 
 def train_anomaly(positions: np.ndarray) -> AnomalyModel | None:
@@ -424,7 +420,7 @@ def train_anomaly(positions: np.ndarray) -> AnomalyModel | None:
 
 
 def train_all(dataset: Dataset, min_samples: int, current: dict[str, ModelCard]) -> dict:
-    """Entrena las tres tareas supervisadas y los dos modelos no supervisados de una especie."""
+    """Trains the three supervised tasks and two unsupervised models for a crop species."""
     water = dataset.water_mask
     heat = dataset.heat_mask
     moisture = ~np.isnan(dataset.moisture_delta)

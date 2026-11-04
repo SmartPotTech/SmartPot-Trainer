@@ -1,5 +1,5 @@
-"""Series sintéticas con la física de un cultivo: el sustrato se seca más rápido con calor y se riega al bajar
-del mínimo; la temperatura y la luz siguen el ciclo del día."""
+"""Synthetic time series modeling crop physics: substrate dries faster under heat and is watered when dropping
+below the minimum; temperature and light follow the daily cycle."""
 
 import math
 import random

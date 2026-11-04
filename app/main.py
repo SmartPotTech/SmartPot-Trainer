@@ -41,8 +41,8 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="SmartPot Trainer",
         version="1.0.0",
-        description="Servicio desacoplado de entrenamiento y aprendizaje continuo de SmartPot "
-        "(Champion-Challenger, K-Means, Isolation Forest, LoRA adapters y persistencia de modelos).",
+        description="SmartPot decoupled continuous learning and model training service "
+        "(Champion-Challenger, K-Means, Isolation Forest, LoRA adapters, and model persistence).",
         lifespan=lifespan,
         docs_url="/docs" if settings.docs_enabled else None,
         redoc_url=None,
@@ -52,7 +52,7 @@ def create_app() -> FastAPI:
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
         errors = [{"field": ".".join(str(p) for p in e["loc"][1:]), "message": e["msg"]} for e in exc.errors()]
-        return JSONResponse(status_code=422, content={"detail": "Datos inválidos", "errors": errors})
+        return JSONResponse(status_code=422, content={"detail": "Invalid data", "errors": errors})
 
     app.include_router(health.router)
     app.include_router(learning.router)

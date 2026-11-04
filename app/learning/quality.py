@@ -1,11 +1,11 @@
-"""Calidad de los datos antes de entrenar.
+"""Data quality assessment prior to model training.
 
-- Completitud: fracción de valores presentes.
-- Validez: fracción de valores dentro de la escala física de los sensores.
-- Atípicos por rango intercuartílico (IQR con k = 3): se excluyen del entrenamiento para que un sensor
-  dañado no enseñe patrones falsos.
+- Completeness: fraction of present values.
+- Validity: fraction of values within the physical sensor scale.
+- Interquartile range (IQR with k = 3) outliers: excluded from training so a faulty sensor
+  does not teach spurious patterns.
 
-El puntaje de calidad (DQS) es el producto de la completitud, la validez y la fracción de filas útiles.
+The Data Quality Score (DQS) is the product of completeness, validity, and the fraction of usable rows.
 """
 
 from dataclasses import dataclass
@@ -38,7 +38,7 @@ class QualityReport:
 
 
 def assess_polars(values: np.ndarray) -> QualityReport:
-    """Evaluación de calidad de datos acelerada con Polars LazyFrame en paralelo."""
+    """Data quality evaluation accelerated in parallel using Polars LazyFrame."""
     rows = values.shape[0]
     if rows == 0:
         return QualityReport(0, 0.0, 0.0, 0, 0.0, np.zeros(0, dtype=bool))
@@ -94,7 +94,7 @@ def assess_polars(values: np.ndarray) -> QualityReport:
 
 
 def assess(values: np.ndarray) -> QualityReport:
-    """Evalúa la calidad de las lecturas usando Polars con degradación elegante a NumPy puro."""
+    """Evaluates reading quality using Polars with graceful fallback to pure NumPy."""
     rows = values.shape[0]
     if rows == 0:
         return QualityReport(0, 0.0, 0.0, 0, 0.0, np.zeros(0, dtype=bool))

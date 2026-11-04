@@ -1,8 +1,8 @@
-"""Exportador de modelos aprendidos a formato ONNX firmado con Ed25519 y hash BLAKE2b.
+"""Exporter of learned models to ONNX format signed with Ed25519 and BLAKE2b digest.
 
-Genera un manifiesto criptográfico a prueba de manipulación (anti-tampering/data poisoning)
-que permite a SmartPot-AI verificar la autenticidad e integridad de los artefactos antes
-de cargarlos en memoria o ejecutar inferencia.
+Generates a tamper-evident cryptographic manifest (anti-tampering/data poisoning)
+that allows SmartPot-AI to verify artifact authenticity and integrity before
+loading them into memory or running inference.
 """
 
 import hashlib
@@ -25,12 +25,12 @@ DUMMY_INPUT_SAMPLE = np.zeros((1, 14), dtype=np.float32)
 
 
 def get_or_create_signing_key(key_path: Path | None = None) -> ed25519.Ed25519PrivateKey:
-    """Carga o genera una clave privada Ed25519 para la firma de modelos."""
+    """Loads or generates an Ed25519 private key for model signing."""
     if key_path and key_path.exists():
         try:
             return serialization.load_pem_private_key(key_path.read_bytes(), password=None)  # type: ignore[return-value]
         except Exception as error:  # noqa: BLE001
-            log.warning("No se pudo cargar la clave Ed25519 desde %s (%s); generando una efímera", key_path, error)
+            log.warning("Could not load Ed25519 key from %s (%s); generating ephemeral key", key_path, error)
 
     private_key = ed25519.Ed25519PrivateKey.generate()
     if key_path:
@@ -49,13 +49,13 @@ def get_or_create_signing_key(key_path: Path | None = None) -> ed25519.Ed25519Pr
             )
             pub_path.write_bytes(pub_pem)
         except OSError as error:
-            log.warning("No se pudo persistir la clave privada Ed25519 en %s: %s", key_path, error)
+            log.warning("Could not persist Ed25519 private key to %s: %s", key_path, error)
 
     return private_key
 
 
 def compute_blake2b(path: Path) -> str:
-    """Calcula el hash criptográfico BLAKE2b (digest de 256 bits) del archivo."""
+    """Computes the BLAKE2b cryptographic hash (256-bit digest) of a file."""
     hasher = hashlib.blake2b(digest_size=32)
     with path.open("rb") as f:
         while chunk := f.read(65536):
@@ -64,7 +64,7 @@ def compute_blake2b(path: Path) -> str:
 
 
 def export_model_to_onnx(model: Any, output_path: Path, n_features: int = 14) -> bool:
-    """Exporta un modelo o pipeline de scikit-learn a formato ONNX."""
+    """Exports a scikit-learn model or pipeline to ONNX format."""
     try:
         from skl2onnx import to_onnx
 
@@ -74,12 +74,12 @@ def export_model_to_onnx(model: Any, output_path: Path, n_features: int = 14) ->
         output_path.write_bytes(onx.SerializeToString())
         return True
     except Exception as error:  # noqa: BLE001
-        log.warning("No se pudo exportar modelo %s a ONNX: %s", output_path.name, error)
+        log.warning("Could not export model %s to ONNX: %s", output_path.name, error)
         return False
 
 
 def export_lora_adapters(adapters: dict[str, Any], output_path: Path) -> bool:
-    """Exporta adaptadores LoRA a formato JSON estructurado."""
+    """Exports LoRA adapters to structured JSON format."""
     try:
         payload = {}
         for task, adapter in adapters.items():
@@ -103,7 +103,7 @@ def export_lora_adapters(adapters: dict[str, Any], output_path: Path) -> bool:
         output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return True
     except Exception as error:  # noqa: BLE001
-        log.warning("No se pudieron exportar adaptadores LoRA a %s: %s", output_path.name, error)
+        log.warning("Could not export LoRA adapters to %s: %s", output_path.name, error)
         return False
 
 
@@ -112,7 +112,7 @@ def sign_manifest(
     private_key: ed25519.Ed25519PrivateKey,
     output_path: Path,
 ) -> Path:
-    """Genera la firma Ed25519 sobre el JSON canónico del manifiesto y lo guarda en disco."""
+    """Signs the canonical JSON representation of the manifest with Ed25519 and writes it to disk."""
     pub_bytes = private_key.public_key().public_bytes(
         encoding=serialization.Encoding.Raw,
         format=serialization.PublicFormat.Raw,
@@ -132,7 +132,7 @@ def sign_manifest(
 
 
 def verify_manifest(manifest_path: Path) -> bool:
-    """Valida la firma Ed25519 y la integridad BLAKE2b de los artefactos del manifiesto."""
+    """Validates the Ed25519 signature and BLAKE2b integrity of all manifest artifacts."""
     if not manifest_path.exists():
         return False
     try:
@@ -155,17 +155,17 @@ def verify_manifest(manifest_path: Path) -> bool:
         for filename, meta in artifacts.items():
             artifact_file = base_dir / filename
             if not artifact_file.exists():
-                log.warning("Artefacto faltante declarado en manifiesto: %s", filename)
+                log.warning("Missing artifact declared in manifest: %s", filename)
                 return False
             expected_hash = meta.get("blake2b")
             actual_hash = compute_blake2b(artifact_file)
             if actual_hash != expected_hash:
-                log.warning("Hash mismatch en %s: esperado %s != actual %s", filename, expected_hash, actual_hash)
+                log.warning("Hash mismatch in %s: expected %s != actual %s", filename, expected_hash, actual_hash)
                 return False
 
         return True
     except (InvalidSignature, ValueError, OSError) as error:
-        log.warning("Fallo en verificación de manifiesto %s: %s", manifest_path.name, error)
+        log.warning("Manifest verification failed for %s: %s", manifest_path.name, error)
         return False
 
 
@@ -175,7 +175,7 @@ def export_crop_models(
     state: Any,
     private_key: ed25519.Ed25519PrivateKey,
 ) -> dict[str, Any]:
-    """Exporta y firma todos los modelos, adaptadores LoRA y manifiesto de una especie."""
+    """Exports and signs all models, LoRA adapters, and manifest for a crop species."""
     models_dir.mkdir(parents=True, exist_ok=True)
     exported_artifacts: dict[str, dict[str, Any]] = {}
 

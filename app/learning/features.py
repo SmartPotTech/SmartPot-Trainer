@@ -1,11 +1,11 @@
-"""Variables de entrada y etiquetas para aprender de las lecturas reales.
+"""Input features and self-supervised labels for learning from real readings.
 
-Cada lectura se expresa como su posición dentro del rango ideal de la especie (0 = mínimo, 1 = máximo),
-la hora del día en forma circular y la tendencia reciente del sustrato y de la temperatura. Así un modelo
-sirve para todos los cultivos de la misma especie.
+Each reading is expressed as its normalized position within the species ideal range (0 = min, 1 = max),
+the circular hour of the day, and the recent substrate and temperature slope. This allows one model
+to generalize across all crops of the same species.
 
-Las etiquetas salen de los propios datos (aprendizaje autosupervisado): lo que pasó en la hora siguiente
-a cada lectura dice si ese cultivo llegó a necesitar riego o ventilación.
+Labels are derived from the data itself (self-supervised learning): what happened in the hour following
+each reading determines whether the crop ended up needing irrigation or ventilation.
 """
 
 import math
@@ -25,11 +25,11 @@ TARGET_TOLERANCE_SECONDS = 600.0
 STORE_NAMES = {"soilMoisture": "soil_moisture"}
 INDEX = {column: i for i, column in enumerate(COLUMNS)}
 FEATURE_NAMES = (
-    *(f"posicion_{p}" for p in PARAMETERS),
-    "hora_seno",
-    "hora_coseno",
-    "tendencia_sustrato",
-    "tendencia_temperatura",
+    *(f"position_{p}" for p in PARAMETERS),
+    "hour_sin",
+    "hour_cos",
+    "substrate_trend",
+    "temperature_trend",
 )
 STATE_PARAMETERS = PARAMETERS
 
@@ -39,7 +39,7 @@ def column(parameter: str) -> int:
 
 
 def positions(profile: CropProfile, values: np.ndarray) -> np.ndarray:
-    """Matriz n × 6 con la posición de cada variable en su rango ideal."""
+    """Returns an n × 6 matrix with the position of each variable within its ideal range."""
     result = np.empty((values.shape[0], len(PARAMETERS)))
     for i, parameter in enumerate(PARAMETERS):
         rng = profile.ranges[parameter]
@@ -55,7 +55,7 @@ def _hour_features(hours: np.ndarray, times: np.ndarray) -> np.ndarray:
 
 
 def _slopes(times: np.ndarray, series: np.ndarray, scale: float) -> np.ndarray:
-    """Cambio por hora en la última media hora, en rangos ideales por hora; 0 si no hay historial suficiente."""
+    """Computes hourly change over the last half hour, normalized by ideal range width; 0 if history is insufficient."""
     n = times.shape[0]
     if n == 0:
         return np.zeros(0)
@@ -69,7 +69,7 @@ def _slopes(times: np.ndarray, series: np.ndarray, scale: float) -> np.ndarray:
 
 @dataclass
 class Dataset:
-    """Filas en orden cronológico global (lo exige la validación cruzada temporal)."""
+    """Rows ordered in global chronological order (required by time-series cross-validation)."""
 
     x: np.ndarray
     times: np.ndarray
@@ -153,7 +153,7 @@ def live_features(
     moment: float,
     history: list[tuple[float, dict[str, float | None]]],
 ) -> np.ndarray | None:
-    """Las mismas variables para la lectura actual, con su historial (segundos epoch, medidas)."""
+    """Computes the same feature vector for the current live reading using its history (epoch seconds, measures)."""
     values = np.array([[measures.get(p) if measures.get(p) is not None else np.nan for p in camel_columns()]])
     pos = positions(profile, values)
     if np.isnan(pos).any():

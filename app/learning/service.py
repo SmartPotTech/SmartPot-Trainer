@@ -1,6 +1,6 @@
-"""Servicio de entrenamiento y aprendizaje continuo: guarda lecturas reales,
-ejecuta torneos de modelos (Champion-Challenger), K-Means, Isolation Forest,
-gestiona adaptadores LoRA y persiste modelos en joblib notificando a SmartPot-AI.
+"""Continuous learning and model training service: stores real readings,
+runs Champion-Challenger model tournaments, K-Means, and Isolation Forest,
+manages LoRA adapters, and persists joblib/ONNX models while notifying SmartPot-AI.
 """
 
 import logging
@@ -65,7 +65,7 @@ class TrainerConfig:
 
 
 def fit_type(crop_type: str, series: Series, min_samples: int, current: TypeState | None) -> TypeState:
-    """Entrenamiento completo de una especie (puede ejecutarse en proceso aislado con spawn)."""
+    """Full training pipeline for a crop species (can run in an isolated spawned process)."""
     profile = get_profile(crop_type)
     report = assess(series.values)
     clean = series.subset(report.keep)
@@ -93,8 +93,10 @@ class TrainerService:
         self.config = config
         self.store = ReadingStore(config.data_dir, database_url=config.database_url, timezone=config.timezone)
         self.models_dir = Path(config.data_dir) / "models" if self.store.persistent else None
-        key_path = Path(config.model_signing_key_path) if config.model_signing_key_path else (
-            self.models_dir / "ed25519_private.pem" if self.models_dir else None
+        key_path = (
+            Path(config.model_signing_key_path)
+            if config.model_signing_key_path
+            else (self.models_dir / "ed25519_private.pem" if self.models_dir else None)
         )
         self._signing_key = get_or_create_signing_key(key_path)
         self.types: dict[str, TypeState] = {}
@@ -114,7 +116,7 @@ class TrainerService:
             return
         self._thread = threading.Thread(target=self._loop, name="trainer-loop", daemon=True)
         self._thread.start()
-        log.info("SmartPot-Trainer: ciclo en segundo plano iniciado (cada %d s)", self.config.check_seconds)
+        log.info("SmartPot-Trainer: background loop started (every %d s)", self.config.check_seconds)
 
     def stop(self) -> None:
         self._stop.set()
@@ -123,7 +125,7 @@ class TrainerService:
         if self._executor is not None:
             self._executor.shutdown(wait=False, cancel_futures=True)
         self.store.close()
-        log.info("SmartPot-Trainer: servicio detenido limpiamente")
+        log.info("SmartPot-Trainer: service stopped cleanly")
 
     def _loop(self) -> None:
         while not self._stop.wait(self.config.check_seconds):
@@ -132,11 +134,11 @@ class TrainerService:
                     removed = self.store.prune(self.config.retention_days, self.config.max_rows)
                     self._pruned_at = time.time()
                     if removed:
-                        log.info("SmartPot-Trainer: %d lecturas antiguas podadas", removed)
+                        log.info("SmartPot-Trainer: %d old readings pruned", removed)
                 for crop_type in self.due():
                     self.train(crop_type)
             except Exception:  # noqa: BLE001
-                log.exception("SmartPot-Trainer: falló el ciclo de reentrenamiento")
+                log.exception("SmartPot-Trainer: retraining loop failed")
 
     # --- Datos ---
 
@@ -190,7 +192,7 @@ class TrainerService:
             self._save(crop_type, state)
             duration = time.time() - started
             log.info(
-                "SmartPot-Trainer: aprendizaje de %s completado: %d lecturas en %.1f s (%s)",
+                "SmartPot-Trainer: learning for %s completed: %d readings in %.1f s (%s)",
                 crop_type,
                 len(series),
                 duration,
@@ -211,7 +213,7 @@ class TrainerService:
                 self._executor = ProcessPoolExecutor(max_workers=1, mp_context=get_context("spawn"))
             return self._executor.submit(fit_type, crop_type, series, self.config.min_samples, current).result()
         except (OSError, RuntimeError) as error:
-            log.warning("SmartPot-Trainer: entrenamiento en el mismo proceso (%s)", error)
+            log.warning("SmartPot-Trainer: training in same process (%s)", error)
             self._executor = None
             return fit_type(crop_type, series, self.config.min_samples, current)
 
@@ -230,7 +232,7 @@ class TrainerService:
             try:
                 export_crop_models(self.models_dir, crop_type, state, self._signing_key)
             except Exception as error:  # noqa: BLE001
-                log.warning("Fallo en exportación de modelos ONNX firmados para %s: %s", crop_type, error)
+                log.warning("Failed to export signed ONNX models for %s: %s", crop_type, error)
 
     def _load(self) -> None:
         if self.models_dir is None or not self.models_dir.exists():
@@ -239,11 +241,11 @@ class TrainerService:
             try:
                 saved = joblib.load(path)
             except Exception as error:  # noqa: BLE001
-                log.warning("No se pudo cargar %s: %s", path.name, error)
+                log.warning("Could not load %s: %s", path.name, error)
                 continue
             if saved.get("sklearn") != sklearn.__version__:
                 log.info(
-                    "Modelos de %s entrenados con otra versión de scikit-learn (%s != %s): se reentrenarán",
+                    "Models for %s trained with a different scikit-learn version (%s != %s): will retrain",
                     path.stem,
                     saved.get("sklearn"),
                     sklearn.__version__,
@@ -251,10 +253,10 @@ class TrainerService:
                 continue
             self.types[path.stem] = saved["state"]
         if self.types:
-            log.info("SmartPot-Trainer: modelos aprendidos cargados: %s", ", ".join(sorted(self.types)))
+            log.info("SmartPot-Trainer: learned models loaded: %s", ", ".join(sorted(self.types)))
 
     def notify_ai_reload(self, crop_type: str | None = None) -> bool:
-        """Notifica al servicio SmartPot-AI para que recargue el modelo en memoria sin reiniciar."""
+        """Notifies the SmartPot-AI service to reload the model in memory without restarting."""
         url = f"{self.config.smartpot_ai_url.rstrip('/')}/v1/learning/reload"
         headers = {"Authorization": f"Bearer {self.config.smartpot_ai_token}"}
         payload = {"cropType": crop_type} if crop_type else {}
@@ -263,14 +265,14 @@ class TrainerService:
                 res = client.post(url, json=payload, headers=headers)
                 if res.is_success:
                     log.info(
-                        "SmartPot-Trainer: SmartPot-AI notificado de recarga para %s",
+                        "SmartPot-Trainer: SmartPot-AI notified of reload for %s",
                         crop_type or "all",
                     )
                     return True
-                log.warning("SmartPot-Trainer: SmartPot-AI devolvió código %d al notificar reload", res.status_code)
+                log.warning("SmartPot-Trainer: SmartPot-AI returned status %d when notifying reload", res.status_code)
                 return False
         except Exception as error:  # noqa: BLE001
-            log.debug("SmartPot-Trainer: no se pudo notificar a SmartPot-AI en %s (%s)", url, error)
+            log.debug("SmartPot-Trainer: could not notify SmartPot-AI at %s (%s)", url, error)
             return False
 
     def adapt_online(
@@ -281,7 +283,7 @@ class TrainerService:
         y_batch: np.ndarray,
         lr: float = 0.02,
     ) -> float:
-        """Actualización online ultra-rápida (< 1 ms) vía adaptador LoRA."""
+        """Ultra-fast online update (< 1 ms) via LoRA adapter."""
         state = self.types.get(crop_type)
         if state is None:
             return 0.0
@@ -361,9 +363,7 @@ def _states(states: StatesModel) -> dict[str, Any]:
     return {
         "k": states.k,
         "silhouette": states.silhouette,
-        "clusters": [
-            {"label": c.label, "description": c.description, "share": c.share} for c in states.clusters
-        ],
+        "clusters": [{"label": c.label, "description": c.description, "share": c.share} for c in states.clusters],
     }
 
 

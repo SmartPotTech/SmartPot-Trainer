@@ -5,7 +5,7 @@ from app.core.security import require_service_token
 from app.learning.service import TrainerService, to_stored
 from app.schemas.learning import IngestResult, LearningBatch, LearningStatus, TrainRequest
 
-router = APIRouter(prefix="/v1/learning", tags=["Entrenamiento"], dependencies=[Depends(require_service_token)])
+router = APIRouter(prefix="/v1/learning", tags=["Training"], dependencies=[Depends(require_service_token)])
 
 
 def _service(request: Request) -> TrainerService:
@@ -15,9 +15,9 @@ def _service(request: Request) -> TrainerService:
 @router.post(
     "/readings",
     response_model=IngestResult,
-    summary="Recibir lecturas reales para entrenamiento",
-    description="La API envía por lotes las lecturas de los cultivos reales. Se guardan seudonimizadas para "
-    "alimentar los próximos entrenamientos de modelos.",
+    summary="Ingest real readings for training",
+    description="The API submits batches of real crop readings. They are stored pseudonymized to "
+    "feed upcoming model training runs.",
 )
 def ingest(batch: LearningBatch, request: Request) -> IngestResult:
     service = _service(request)
@@ -39,9 +39,9 @@ def ingest(batch: LearningBatch, request: Request) -> IngestResult:
 @router.get(
     "/status",
     response_model=LearningStatus,
-    summary="Estado de modelos y aprendizaje continuo",
-    description="Lecturas por especie, calidad de datos, comparación de modelos vigentes, estados de operación "
-    "y detector de lecturas atípicas.",
+    summary="Model and continuous learning status",
+    description="Readings per species, data quality, active model comparisons, operating states, "
+    "and outlier detector status.",
 )
 def status(request: Request) -> LearningStatus:
     return LearningStatus.model_validate(_service(request).status())
@@ -50,23 +50,23 @@ def status(request: Request) -> LearningStatus:
 @router.post(
     "/train",
     response_model=LearningStatus,
-    summary="Entrenar modelos ahora",
-    description="Entrena la especie indicada o todas las que tengan suficientes datos nuevos acumulados.",
+    summary="Train models now",
+    description="Trains the specified crop species or all species with enough newly accumulated readings.",
 )
 async def train(payload: TrainRequest, request: Request) -> LearningStatus:
     service = _service(request)
     crop_types = [payload.crop_type.upper()] if payload.crop_type else service.due()
     for crop_type in crop_types:
         if crop_type not in service.counts():
-            raise HTTPException(status_code=404, detail=f"No hay lecturas de {crop_type}")
+            raise HTTPException(status_code=404, detail=f"No readings for {crop_type}")
         await run_in_threadpool(service.train, crop_type)
     return LearningStatus.model_validate(service.status())
 
 
 @router.delete(
     "/crops/{crop_id}",
-    summary="Olvidar un cultivo",
-    description="Borra las lecturas de un cultivo eliminado para garantizar privacidad y evitar sesgo.",
+    summary="Forget a crop",
+    description="Deletes stored readings for a removed crop to preserve privacy and prevent bias.",
 )
 def forget(crop_id: str, request: Request) -> dict[str, int]:
     return {"deleted": _service(request).forget(crop_id)}
@@ -74,8 +74,8 @@ def forget(crop_id: str, request: Request) -> dict[str, int]:
 
 @router.post(
     "/prune",
-    summary="Podar lecturas antiguas",
-    description="Elimina lecturas que superen los días de retención o el tope de filas por especie.",
+    summary="Prune old readings",
+    description="Removes readings exceeding the retention window or per-species row cap.",
 )
 def prune(request: Request) -> dict[str, int]:
     service = _service(request)

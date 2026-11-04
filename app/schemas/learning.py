@@ -35,7 +35,7 @@ class LearningReading(CamelModel):
     @classmethod
     def known_crop(cls, value: str) -> str:
         if value.upper() not in PROFILES:
-            raise ValueError(f"Tipo de cultivo desconocido: {value}")
+            raise ValueError(f"Unknown crop type: {value}")
         return value.upper()
 
 
@@ -66,10 +66,10 @@ class ModelCardOut(CamelModel):
     reason: str | None = None
     metric: str
     model: str | None = None
-    score: float | None = Field(None, description="Promedio de la validación cruzada temporal")
+    score: float | None = Field(None, description="Time-series cross-validation mean score")
     std: float | None = None
-    holdout: float | None = Field(None, description="Puntaje en el 20 % de lecturas más recientes")
-    baseline: float | None = Field(None, description="Puntaje de la línea base en las mismas lecturas")
+    holdout: float | None = Field(None, description="Score on the most recent 20% holdout readings")
+    baseline: float | None = Field(None, description="Baseline score on the same holdout readings")
     samples: int
     positives: int | None = None
     version: int

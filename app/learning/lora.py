@@ -1,16 +1,16 @@
-"""Adaptadores de bajo rango (LoRA - Low-Rank Adaptation) en NumPy para especies de cultivo.
+"""Low-Rank Adaptation (LoRA) adapters in NumPy for crop species.
 
-Permite adaptar en caliente las probabilidades y predicciones de los modelos base
-por especie sin reentrenar arquitecturas pesadas ni invocar GridSearchCV.
+Enables hot adaptation of base model probabilities and predictions per species
+without retraining heavy architectures or running GridSearchCV.
 
-Ecuación de adaptación:
+Adaptation equation:
     W = W0 + (alpha / r) * (B @ A)
-Donde:
-    - W0 in R^{d x k}: Pesos base congelados.
-    - B in R^{d x r}: Inicializado en ceros (comienza sin sesgo respecto a W0).
-    - A in R^{r x k}: Inicializado con distribución normal Kaiming/He.
-    - r in [2, 4]: Rango intrínseco de adaptación.
-    - alpha: Factor de escala.
+Where:
+    - W0 in R^{d x k}: Frozen base weights.
+    - B in R^{d x r}: Initialized to zeros (starts with zero bias relative to W0).
+    - A in R^{r x k}: Initialized with Kaiming/He normal distribution.
+    - r in [2, 4]: Intrinsic adaptation rank.
+    - alpha: Scaling factor.
 """
 
 import time
@@ -67,7 +67,7 @@ class LowRankCropAdapter:
         return self.b0 + self.bias
 
     def fit_base(self, x: np.ndarray, y: np.ndarray, epochs: int = 50, lr: float = 0.05) -> None:
-        """Ajusta los pesos base W0 iniciales a partir de un conjunto de entrenamiento."""
+        """Fits initial base weights W0 from a training set."""
         n = x.shape[0]
         if n == 0:
             return
@@ -80,7 +80,7 @@ class LowRankCropAdapter:
             self.b0 -= lr * np.sum(grad_z, axis=0, keepdims=True)
 
     def predict_proba(self, x: np.ndarray) -> np.ndarray:
-        """Devuelve array (N, 2) compatible con la interfaz de Scikit-Learn."""
+        """Returns an (N, 2) array compatible with the Scikit-Learn interface."""
         if x.ndim == 1:
             x = x.reshape(1, -1)
         z = x @ self.effective_weight + self.effective_bias
@@ -99,7 +99,7 @@ class LowRankCropAdapter:
         lr: float = 0.02,
         l2: float = 1e-4,
     ) -> float:
-        """Actualización analítica rápida en memoria (< 1 ms)."""
+        """Fast in-memory analytical update (< 1 ms)."""
         started = time.perf_counter()
         if x_batch.ndim == 1:
             x_batch = x_batch.reshape(1, -1)

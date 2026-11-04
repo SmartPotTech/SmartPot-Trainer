@@ -21,7 +21,7 @@ FROM python:3.13-slim-bookworm
 RUN apt-get update && apt-get upgrade -y --no-install-recommends && rm -rf /var/lib/apt/lists/*
 
 LABEL org.opencontainers.image.title="SmartPot Trainer" \
-      org.opencontainers.image.description="Servicio desacoplado de entrenamiento y aprendizaje continuo de SmartPot" \
+      org.opencontainers.image.description="SmartPot decoupled continuous learning and model training service" \
       org.opencontainers.image.source="https://github.com/SmartPotTech/SmartPot-Trainer" \
       org.opencontainers.image.licenses="MIT"
 
