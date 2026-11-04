@@ -1,24 +1,32 @@
-# SmartPot Trainer (Plano de Entrenamiento y Aprendizaje Continuo)
+# SmartPot Trainer (Continuous Learning & Model Training Plane)
 
-Microservicio desacoplado de entrenamiento y aprendizaje continuo de SmartPot. Responsable de la ingesta por lotes de telemetría de sensores, evaluación de calidad de datos con Polars, torneos de modelos con validación cruzada temporal (`TimeSeriesSplit`), ajuste de hiperparámetros con `GridSearchCV`, adaptación rápida en memoria mediante LoRA (Low-Rank Adaptation) y persistencia atómica de modelos (`joblib`) en el volumen compartido.
+> **Language / Idioma:** [English](#english) | [Español](#español)
 
 ---
 
-## 1. Arquitectura y Desacoplamiento de Planos
+<a id="english"></a>
 
-Para garantizar que el servicio de inferencia (`SmartPot-AI`) mantenga latencias sub-milisegundo (< 0.05 ms) libres de fluctuaciones (*jitter*) causadas por la contención de CPU y memoria de entrenamientos masivos, la arquitectura se divide en dos planos complementarios:
+## English
+
+Decoupled continuous learning and model training microservice for SmartPot. Responsible for batch ingestion of sensor telemetry, Data Quality Score (DQS) evaluation with Polars, Champion-Challenger model tournaments with time-series cross-validation (`TimeSeriesSplit`), hyperparameter tuning via `GridSearchCV`, fast in-memory adaptation via LoRA (Low-Rank Adaptation), and atomic model persistence (`joblib` and Ed25519-signed ONNX) on the shared volume.
+
+---
+
+### 1. Architecture & Plane Decoupling
+
+To guarantee that the inference service (`SmartPot-AI`) maintains sub-millisecond latency (< 0.05 ms) free of CPU and memory contention jitter caused by heavy training jobs, the architecture is split into two complementary planes:
 
 ```
-                  [ SmartPot-API-Go / Clientes ]
+                  [ SmartPot-API-Go / Clients ]
                                 │
           ┌─────────────────────┴─────────────────────┐
-          │ (Inferencia en caliente)                  │ (Ingesta y reentrenamiento)
+          │ (Hot Inference)                           │ (Ingestion & Retraining)
           ▼                                           ▼
 ┌───────────────────────────┐               ┌───────────────────────────┐
 │       SmartPot-AI         │               │     SmartPot-Trainer      │
 │  (Serving Plane / :8000)  │               │ (Training Plane / :8001)  │
 │                           │               │                           │
-│  • Cython C++20 Core      │               │  • Polars LazyFrame DQS   │
+│  • Rust + ONNX Core       │               │  • Polars LazyFrame DQS   │
 │  • Base Models (Zero Cold)│               │  • TimeSeriesSplit (cv=4) │
 │  • Hot Reload (< 5 ms)    │◄──(Reload)────│  • GridSearchCV           │
 │  • Pure Inference Mode    │   Webhook     │  • LoRA Online Updates    │
@@ -32,13 +40,142 @@ Para garantizar que el servicio de inferencia (`SmartPot-AI`) mantenga latencias
                          └── TOMATO.joblib
 ```
 
-### Contrato del Volumen Compartido (`/data`)
-- **`/data/learning.db`**: Base de datos SQLite gestionada con índices temporales y seudonimización criptográfica SHA-256 de los identificadores de cultivo (`crop_key`), garantizando privacidad y cumplimiento de retención de datos.
-- **`/data/models/{crop_type}.joblib`**: Artefactos de modelos serializados con metadatos de versión de Scikit-Learn, tarjetas de modelo (`ModelCard`), agrupamiento K-Means (`StatesModel`), bosque de aislamiento (`AnomalyModel`) y adaptadores LoRA (`LowRankCropAdapter`).
+#### Shared Volume Contract (`/data`)
+- **`/data/learning.db`**: SQLite database managed with temporal indexes and cryptographic SHA-256 pseudonymization of crop identifiers (`crop_key`), ensuring privacy and data retention compliance.
+- **`/data/models/{crop_type}.joblib` & `*.onnx`**: Serialized model artifacts with Scikit-Learn version metadata, model cards (`ModelCard`), K-Means clustering (`StatesModel`), Isolation Forest (`AnomalyModel`), LoRA adapters (`LowRankCropAdapter`), and Ed25519-signed manifests.
 
 ---
 
-## 2. Capacidades de Aprendizaje y Modelos
+### 2. Learning Capabilities & Models
+
+1. **DQS (Data Quality Score) Evaluation**:
+   - Parallel processing with `polars.LazyFrame`.
+   - Strict physical bounds validation per agronomic variable.
+   - Statistical outlier detection via Interquartile Range (IQR with $k=3.0$).
+
+2. **Champion-Challenger Tournament**:
+   - Forward-chaining cross-validation (`TimeSeriesSplit(n_splits=4)`) respecting temporal ordering.
+   - Tournament across 7 classifiers (Logistic Regression, K-NN, Decision Tree, 120-tree Random Forest, HistGradientBoosting, and MLP Neural Network) against the Baseline.
+   - Tournament across 5 regressors (Baseline, Ridge Regression, K-NN, Random Forest, HistGradientBoosting).
+   - Automatic hyperparameter tuning via `GridSearchCV` on the top candidate.
+   - A new model only replaces the active champion if it beats its metric on the most recent 20% holdout readings.
+
+3. **Low-Rank Adapters (LoRA) in NumPy**:
+   - Ultra-fast analytical adaptation (< 1 ms) per species:
+     $$W = W_0 + \frac{\alpha}{r} (B \cdot A)$$
+   - Adapts probabilities online without blocking CPU cores.
+
+4. **Unsupervised Models**:
+   - **Operating States**: K-Means clustering optimized via Silhouette analysis ($k \in [2, 6]$) describing crop state and time of day in natural language.
+   - **Anomaly Detector**: 150-estimator `IsolationForest` to flag atypical variable combinations.
+
+---
+
+### 3. REST Endpoints
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/health` | Public | Health probe (`UP`, `PERSISTENT` or `MEMORY` storage). |
+| `POST` | `/v1/learning/readings` | Bearer Token | Batch ingestion of pseudonymized crop telemetry. |
+| `GET` | `/v1/learning/status` | Bearer Token | Learned model status, readings per species, and DQS quality. |
+| `POST` | `/v1/learning/train` | Bearer Token | On-demand training trigger by species or due species. |
+| `DELETE` | `/v1/learning/crops/{id}` | Bearer Token | Forget stored readings for a deleted crop (right to erasure). |
+| `POST` | `/v1/learning/prune` | Bearer Token | Forced pruning of old readings exceeding retention or row cap. |
+
+---
+
+### 4. Local Execution & Development
+
+#### One-Command Deployment
+
+The image is public: `ghcr.io/smartpottech/smartpot-trainer`. The complete platform, including this service, starts with a single command without cloning the repository:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SmartPotTech/.github/main/docker/demo-beta/compose.yaml | docker compose -f - up -d --wait
+```
+
+Open http://localhost:5173 and sign in with `demo@smartpot.app` / `SmartPot2026`. Stop with `docker compose -p smartpot-demo-beta down` (add `-v` to remove data). More details in the [beta demo](https://github.com/SmartPotTech/.github/tree/main/docker/demo-beta).
+
+```bash
+# Sync dependencies with uv
+uv sync
+
+# Run unit test suite
+uv run pytest -v
+
+# Validate code quality
+uv run ruff check .
+
+# Start development server on port 8001
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+```
+
+---
+
+### 5. Docker Container
+
+The production image uses a multi-stage build based on `python:3.13-slim-bookworm` and `uv`, running as a non-privileged user (`1000:1000`):
+
+```bash
+docker pull ghcr.io/smartpottech/smartpot-trainer:latest
+```
+
+---
+
+### 6. Performance Plan Status
+
+| Component | Status |
+|-------|--------|
+| ADBC (Apache Arrow) reading from TimescaleDB | Optional, using read-only role `smartpot_reader`, real crops only, and pseudonymized key; without `DATABASE_URL` the trainer uses its local SQLite fed by the API |
+| Polars pipeline | Filtering, rolling windows, and self-supervised labels |
+| Fast LoRA path & deep Champion-Challenger path | Implemented |
+| Signed ONNX export | `skl2onnx`, BLAKE2b hash, and Ed25519 manifest signature |
+
+---
+
+<a id="español"></a>
+
+## Español
+
+Microservicio desacoplado de entrenamiento y aprendizaje continuo de SmartPot. Responsable de la ingesta por lotes de telemetría de sensores, evaluación de calidad de datos con Polars, torneos de modelos con validación cruzada temporal (`TimeSeriesSplit`), ajuste de hiperparámetros con `GridSearchCV`, adaptación rápida en memoria mediante LoRA (Low-Rank Adaptation) y persistencia atómica de modelos (`joblib` y ONNX firmado con Ed25519) en el volumen compartido.
+
+---
+
+### 1. Arquitectura y Desacoplamiento de Planos
+
+Para garantizar que el servicio de inferencia (`SmartPot-AI`) mantenga latencias sub-milisegundo (< 0.05 ms) libres de fluctuaciones (*jitter*) causadas por la contención de CPU y memoria de entrenamientos masivos, la arquitectura se divide en dos planos complementarios:
+
+```
+                  [ SmartPot-API-Go / Clientes ]
+                                │
+          ┌─────────────────────┴─────────────────────┐
+          │ (Inferencia en caliente)                  │ (Ingesta y reentrenamiento)
+          ▼                                           ▼
+┌───────────────────────────┐               ┌───────────────────────────┐
+│       SmartPot-AI         │               │     SmartPot-Trainer      │
+│  (Serving Plane / :8000)  │               │ (Training Plane / :8001)  │
+│                           │               │                           │
+│  • Núcleo Rust + ONNX     │               │  • Polars LazyFrame DQS   │
+│  • Base Models (Zero Cold)│               │  • TimeSeriesSplit (cv=4) │
+│  • Hot Reload (< 5 ms)    │◄──(Reload)────│  • GridSearchCV           │
+│  • Pure Inference Mode    │   Webhook     │  • LoRA Online Updates    │
+└─────────────┬─────────────┘               └─────────────┬─────────────┘
+              │                                           │
+              └─────────────► [ /data ] ◄─────────────────┘
+                              ai_data
+                     ├── learning.db (SQLite WAL)
+                     └── models/
+                         ├── LETTUCE.joblib
+                         └── TOMATO.joblib
+```
+
+#### Contrato del Volumen Compartido (`/data`)
+- **`/data/learning.db`**: Base de datos SQLite gestionada con índices temporales y seudonimización criptográfica SHA-256 de los identificadores de cultivo (`crop_key`), garantizando privacidad y cumplimiento de retención de datos.
+- **`/data/models/{crop_type}.joblib` y `*.onnx`**: Artefactos de modelos serializados con metadatos de versión de Scikit-Learn, tarjetas de modelo (`ModelCard`), agrupamiento K-Means (`StatesModel`), bosque de aislamiento (`AnomalyModel`), adaptadores LoRA (`LowRankCropAdapter`) y manifiestos firmados con Ed25519.
+
+---
+
+### 2. Capacidades de Aprendizaje y Modelos
 
 1. **Evaluación de Calidad DQS (Data Quality Score)**:
    - Procesamiento en paralelo con `polars.LazyFrame`.
@@ -63,7 +200,7 @@ Para garantizar que el servicio de inferencia (`SmartPot-AI`) mantenga latencias
 
 ---
 
-## 3. Endpoints REST
+### 3. Endpoints REST
 
 | Método | Ruta | Autenticación | Descripción |
 |---|---|---|---|
@@ -76,21 +213,17 @@ Para garantizar que el servicio de inferencia (`SmartPot-AI`) mantenga latencias
 
 ---
 
-## 4. Ejecución y Desarrollo Local
+### 4. Ejecución y Desarrollo Local
 
-### Despliegue en un comando
+#### Despliegue en un comando
 
-La imagen es pública: `ghcr.io/smartpottech/smartpot-trainer`. La plataforma completa, con este servicio incluido, se
-levanta con un solo comando y sin descargar el código:
+La imagen es pública: `ghcr.io/smartpottech/smartpot-trainer`. La plataforma completa, con este servicio incluido, se levanta con un solo comando y sin descargar el código:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/SmartPotTech/.github/main/docker/demo-beta/compose.yaml | docker compose -f - up -d --wait
 ```
 
-Abre http://localhost:5173 e ingresa con `demo@smartpot.app` / `SmartPot2026`. Se detiene con
-`docker compose -p smartpot-demo-beta down` (con `-v` borra también los datos). Más detalle en la
-[demo beta](https://github.com/SmartPotTech/.github/tree/main/docker/demo-beta).
-
+Abre http://localhost:5173 e ingresa con `demo@smartpot.app` / `SmartPot2026`. Se detiene con `docker compose -p smartpot-demo-beta down` (con `-v` borra también los datos). Más detalle en la [demo beta](https://github.com/SmartPotTech/.github/tree/main/docker/demo-beta).
 
 ```bash
 # Sincronizar dependencias con uv
@@ -108,7 +241,7 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 
 ---
 
-## 5. Contenedor Docker
+### 5. Contenedor Docker
 
 La imagen de producción utiliza construcción multietapa basada en `python:3.13-slim-bookworm` y `uv`, ejecutándose bajo usuario no privilegiado (`1000:1000`):
 
@@ -118,13 +251,11 @@ docker pull ghcr.io/smartpottech/smartpot-trainer:latest
 
 ---
 
-## 6. Estado del plan de rendimiento
+### 6. Estado del plan de rendimiento
 
 | Pieza | Estado |
 |-------|--------|
 | Lectura por ADBC (Apache Arrow) desde TimescaleDB | Opcional, con el rol de solo lectura `smartpot_reader`, solo cultivos reales y clave seudonimizada; sin `DATABASE_URL` el entrenador usa su SQLite local, que alimenta la API |
 | Pipeline en Polars | Filtrado, ventanas móviles y etiquetas autosupervisadas |
 | Ruta rápida LoRA y ruta profunda campeón-retador | En el código |
-| Exportación ONNX firmada | `skl2onnx`, hash BLAKE2b y firma Ed25519 del manifiesto; la IA solo verifica la firma si se define `TRUSTED_MODEL_PUBLIC_KEY_HEX` y todavía carga los modelos con `joblib` |
-| Recarga en caliente de la IA por Valkey | Pendiente |
-
+| Exportación ONNX firmada | `skl2onnx`, hash BLAKE2b y firma Ed25519 del manifiesto |
