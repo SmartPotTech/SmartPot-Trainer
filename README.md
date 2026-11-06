@@ -8,7 +8,7 @@
 
 ## English
 
-Decoupled continuous learning and model training microservice for SmartPot. Responsible for batch ingestion of sensor telemetry, Data Quality Score (DQS) evaluation with Polars, Champion-Challenger model tournaments with time-series cross-validation (`TimeSeriesSplit`), hyperparameter tuning via `GridSearchCV`, fast in-memory adaptation via LoRA (Low-Rank Adaptation), and atomic model persistence (`joblib` and Ed25519-signed ONNX) on the shared volume.
+Decoupled continuous learning and model training microservice for SmartPot. Responsible for batch ingestion of sensor telemetry, Data Quality Score (DQS) evaluation with Polars, Champion-Challenger model tournaments with time-series cross-validation (`TimeSeriesSplit`), hyperparameter tuning via `GridSearchCV`, fast in-memory adaptation via LoRA (Low-Rank Adaptation), and atomic model persistence (native `smartpot.learned-models/1` JSON with Ed25519-signed manifests, plus ONNX and joblib inspection sidecars) on the shared volume.
 
 ---
 
@@ -42,7 +42,10 @@ To guarantee that the inference service (`SmartPot-AI`) maintains sub-millisecon
 
 #### Shared Volume Contract (`/data`)
 - **`/data/learning.db`**: SQLite database managed with temporal indexes and cryptographic SHA-256 pseudonymization of crop identifiers (`crop_key`), ensuring privacy and data retention compliance.
-- **`/data/models/{crop_type}.joblib` & `*.onnx`**: Serialized model artifacts with Scikit-Learn version metadata, model cards (`ModelCard`), K-Means clustering (`StatesModel`), Isolation Forest (`AnomalyModel`), LoRA adapters (`LowRankCropAdapter`), and Ed25519-signed manifests.
+- **`/data/models/{SPECIES}_inference.json`**: canonical native package with the three champion pipelines, K-Means states, Isolation Forest, LoRA adapters and exactly 16 scikit-learn control cases.
+- **`/data/models/{SPECIES}_manifest.json`**: BLAKE2b-256 hashes and the Ed25519 signature; SmartPot-AI rejects anything not signed by `TRUSTED_MODEL_PUBLIC_KEY_HEX`.
+- **`/data/models/{crop_type}.joblib` & `*.onnx`**: inspection sidecars only. joblib is never deserialized without a verified manifest signed by the pinned key.
+- **`/data/keys/ed25519_private.pem`**: private signing key in a separate `trainer_keys` volume, mode `0600`, never inside `ai_data`.
 
 ---
 
@@ -52,6 +55,7 @@ To guarantee that the inference service (`SmartPot-AI`) maintains sub-millisecon
    - Parallel processing with `polars.LazyFrame`.
    - Strict physical bounds validation per agronomic variable.
    - Statistical outlier detection via Interquartile Range (IQR with $k=3.0$).
+   - Physically impossible per-minute jumps in temperature, humidity and substrate, plus an Isolation Forest secondary filter before building the training set.
 
 2. **Champion-Challenger Tournament**:
    - Forward-chaining cross-validation (`TimeSeriesSplit(n_splits=4)`) respecting temporal ordering.
@@ -70,6 +74,15 @@ To guarantee that the inference service (`SmartPot-AI`) maintains sub-millisecon
    - **Anomaly Detector**: 150-estimator `IsolationForest` to flag atypical variable combinations.
 
 ---
+
+### 2.1 Model supply chain and fail-closed security
+
+- The native `{SPECIES}_inference.json` package contains exactly 16 deterministic control cases; SmartPot-AI rejects a bundle with a missing, duplicated or malformed case.
+- The Ed25519 private key lives in `MODEL_SIGNING_KEY_PATH` (default `/data/keys/ed25519_private.pem`, separate `trainer_keys` volume, mode `0600`). An existing corrupt key aborts startup; no ephemeral key is generated.
+- `verify_manifest` compares against `TRUSTED_MODEL_PUBLIC_KEY_HEX`, not only the key declared inside the manifest.
+- Persisted joblib files are never deserialized without a manifest signature and BLAKE2b artifact hash verified against that pinned key; without a trust anchor the Trainer retrains instead of loading them.
+- A classifier whose training window (or a time fold) has only one class returns `PENDING` with an explanatory reason instead of raising HTTP 500.
+- `DELETE /v1/learning/crops/{crop_id}` only accepts 24-character lowercase ObjectId hex; any other value returns 422. Non-ASCII Bearer headers return 401, never 500.
 
 ### 3. REST Endpoints
 
@@ -129,7 +142,7 @@ docker pull ghcr.io/smartpottech/smartpot-trainer:latest
 | ADBC (Apache Arrow) reading from TimescaleDB | Optional, using read-only role `smartpot_reader`, real crops only, and pseudonymized key; without `DATABASE_URL` the trainer uses its local SQLite fed by the API |
 | Polars pipeline | Filtering, rolling windows, and self-supervised labels |
 | Fast LoRA path & deep Champion-Challenger path | Implemented |
-| Signed ONNX export | `skl2onnx`, BLAKE2b hash, and Ed25519 manifest signature |
+| Signed native export | `smartpot.learned-models/1` JSON, 16 controls, BLAKE2b hashes, and Ed25519 manifest signature (ONNX is an optional sidecar) |
 
 ---
 
@@ -137,7 +150,7 @@ docker pull ghcr.io/smartpottech/smartpot-trainer:latest
 
 ## Español
 
-Microservicio desacoplado de entrenamiento y aprendizaje continuo de SmartPot. Responsable de la ingesta por lotes de telemetría de sensores, evaluación de calidad de datos con Polars, torneos de modelos con validación cruzada temporal (`TimeSeriesSplit`), ajuste de hiperparámetros con `GridSearchCV`, adaptación rápida en memoria mediante LoRA (Low-Rank Adaptation) y persistencia atómica de modelos (`joblib` y ONNX firmado con Ed25519) en el volumen compartido.
+Microservicio desacoplado de entrenamiento y aprendizaje continuo de SmartPot. Responsable de la ingesta por lotes de telemetría de sensores, evaluación de calidad de datos con Polars, torneos de modelos con validación cruzada temporal (`TimeSeriesSplit`), ajuste de hiperparámetros con `GridSearchCV`, adaptación rápida en memoria mediante LoRA (Low-Rank Adaptation) y persistencia atómica de modelos (JSON nativo `smartpot.learned-models/1` con manifiestos firmados con Ed25519, más sidecars ONNX y joblib para inspección) en el volumen compartido.
 
 ---
 
@@ -171,7 +184,10 @@ Para garantizar que el servicio de inferencia (`SmartPot-AI`) mantenga latencias
 
 #### Contrato del Volumen Compartido (`/data`)
 - **`/data/learning.db`**: Base de datos SQLite gestionada con índices temporales y seudonimización criptográfica SHA-256 de los identificadores de cultivo (`crop_key`), garantizando privacidad y cumplimiento de retención de datos.
-- **`/data/models/{crop_type}.joblib` y `*.onnx`**: Artefactos de modelos serializados con metadatos de versión de Scikit-Learn, tarjetas de modelo (`ModelCard`), agrupamiento K-Means (`StatesModel`), bosque de aislamiento (`AnomalyModel`), adaptadores LoRA (`LowRankCropAdapter`) y manifiestos firmados con Ed25519.
+- **`/data/models/{SPECIES}_inference.json`**: paquete nativo canónico con los tres pipelines campeones, estados K-Means, Isolation Forest, adaptadores LoRA y exactamente 16 casos de control de scikit-learn.
+- **`/data/models/{SPECIES}_manifest.json`**: hashes BLAKE2b-256 y firma Ed25519; SmartPot-AI rechaza todo lo que no esté firmado con `TRUSTED_MODEL_PUBLIC_KEY_HEX`.
+- **`/data/models/{crop_type}.joblib` y `*.onnx`**: sidecars de inspección. joblib nunca se deserializa sin un manifiesto verificado y firmado con la clave fijada.
+- **`/data/keys/ed25519_private.pem`**: clave privada de firma en el volumen separado `trainer_keys`, modo `0600`, nunca dentro de `ai_data`.
 
 ---
 
@@ -181,6 +197,7 @@ Para garantizar que el servicio de inferencia (`SmartPot-AI`) mantenga latencias
    - Procesamiento en paralelo con `polars.LazyFrame`.
    - Validación física estricta por variable agronómica.
    - Detección de atípicos estadísticos por Rango Intercuartílico (IQR con $k=3.0$).
+   - Saltos físicamente imposibles por minuto en temperatura, humedad y sustrato, más un filtro secundario Isolation Forest antes de construir el conjunto de entrenamiento.
 
 2. **Torneo Champion-Challenger**:
    - Validación cruzada hacia adelante (`TimeSeriesSplit(n_splits=4)`) respetando la flecha temporal.
@@ -199,6 +216,15 @@ Para garantizar que el servicio de inferencia (`SmartPot-AI`) mantenga latencias
    - **Detector de Anomalías**: `IsolationForest` de 150 estimadores para alertar sobre combinaciones atípicas de variables.
 
 ---
+
+### 2.1 Cadena de suministro de modelos y seguridad fail-closed
+
+- El paquete nativo `{SPECIES}_inference.json` contiene exactamente 16 casos de control deterministas; SmartPot-AI rechaza un bundle con casos faltantes, duplicados o mal formados.
+- La clave privada Ed25519 vive en `MODEL_SIGNING_KEY_PATH` (por defecto `/data/keys/ed25519_private.pem`, volumen separado `trainer_keys`, modo `0600`). Una clave existente corrupta aborta el arranque; no se genera una clave efímera.
+- `verify_manifest` compara contra `TRUSTED_MODEL_PUBLIC_KEY_HEX`, no solo contra la clave declarada dentro del manifiesto.
+- Los joblib persistidos nunca se deserializan sin firma de manifiesto y hash BLAKE2b verificados con esa clave fijada; sin ancla de confianza el Trainer reentrena en vez de cargarlos.
+- Un clasificador cuya ventana de entrenamiento (o un fold temporal) tenga una sola clase devuelve `PENDING` con una razón explicativa en vez de provocar HTTP 500.
+- `DELETE /v1/learning/crops/{crop_id}` solo acepta ObjectId hexadecimal de 24 caracteres en minúsculas; cualquier otro valor devuelve 422. Una cabecera Bearer no ASCII devuelve 401, nunca 500.
 
 ### 3. Endpoints REST
 
@@ -258,4 +284,4 @@ docker pull ghcr.io/smartpottech/smartpot-trainer:latest
 | Lectura por ADBC (Apache Arrow) desde TimescaleDB | Opcional, con el rol de solo lectura `smartpot_reader`, solo cultivos reales y clave seudonimizada; sin `DATABASE_URL` el entrenador usa su SQLite local, que alimenta la API |
 | Pipeline en Polars | Filtrado, ventanas móviles y etiquetas autosupervisadas |
 | Ruta rápida LoRA y ruta profunda campeón-retador | En el código |
-| Exportación ONNX firmada | `skl2onnx`, hash BLAKE2b y firma Ed25519 del manifiesto |
+| Exportación nativa firmada | JSON smartpot.learned-models/1, 16 controles, hashes BLAKE2b y firma Ed25519 del manifiesto (ONNX es un sidecar opcional) |
