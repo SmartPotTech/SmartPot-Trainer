@@ -17,7 +17,7 @@ Decoupled continuous learning and model training microservice for SmartPot. Resp
 To guarantee that the inference service (`SmartPot-AI`) maintains sub-millisecond latency (< 0.05 ms) free of CPU and memory contention jitter caused by heavy training jobs, the architecture is split into two complementary planes:
 
 ```
-                  [ SmartPot-API-Go / Clients ]
+                  [ SmartPot-API / Clients ]
                                 │
           ┌─────────────────────┴─────────────────────┐
           │ (Hot Inference)                           │ (Ingestion & Retraining)
@@ -91,10 +91,10 @@ To guarantee that the inference service (`SmartPot-AI`) maintains sub-millisecon
 The image is public: `ghcr.io/smartpottech/smartpot-trainer`. The complete platform, including this service, starts with a single command without cloning the repository:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SmartPotTech/.github/main/docker/demo-beta/compose.yaml | docker compose -f - up -d --wait
+curl -fsSL https://raw.githubusercontent.com/SmartPotTech/.github/main/docker/demo/compose.yaml | docker compose -f - up -d --wait
 ```
 
-Open http://localhost:5173 and sign in with `demo@smartpot.app` / `SmartPot2026`. Stop with `docker compose -p smartpot-demo-beta down` (add `-v` to remove data). More details in the [beta demo](https://github.com/SmartPotTech/.github/tree/main/docker/demo-beta).
+Open http://localhost:5173 and sign in with `demo@smartpot.app` / `SmartPot2026`. Stop with `docker compose -p smartpot-demo down` (add `-v` to remove data). More details in the [demo](https://github.com/SmartPotTech/.github/tree/main/docker/demo).
 
 ```bash
 # Sync dependencies with uv
@@ -146,7 +146,7 @@ Microservicio desacoplado de entrenamiento y aprendizaje continuo de SmartPot. R
 Para garantizar que el servicio de inferencia (`SmartPot-AI`) mantenga latencias sub-milisegundo (< 0.05 ms) libres de fluctuaciones (*jitter*) causadas por la contención de CPU y memoria de entrenamientos masivos, la arquitectura se divide en dos planos complementarios:
 
 ```
-                  [ SmartPot-API-Go / Clientes ]
+                  [ SmartPot-API / Clientes ]
                                 │
           ┌─────────────────────┴─────────────────────┐
           │ (Inferencia en caliente)                  │ (Ingesta y reentrenamiento)
@@ -220,10 +220,10 @@ Para garantizar que el servicio de inferencia (`SmartPot-AI`) mantenga latencias
 La imagen es pública: `ghcr.io/smartpottech/smartpot-trainer`. La plataforma completa, con este servicio incluido, se levanta con un solo comando y sin descargar el código:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SmartPotTech/.github/main/docker/demo-beta/compose.yaml | docker compose -f - up -d --wait
+curl -fsSL https://raw.githubusercontent.com/SmartPotTech/.github/main/docker/demo/compose.yaml | docker compose -f - up -d --wait
 ```
 
-Abre http://localhost:5173 e ingresa con `demo@smartpot.app` / `SmartPot2026`. Se detiene con `docker compose -p smartpot-demo-beta down` (con `-v` borra también los datos). Más detalle en la [demo beta](https://github.com/SmartPotTech/.github/tree/main/docker/demo-beta).
+Abre http://localhost:5173 e ingresa con `demo@smartpot.app` / `SmartPot2026`. Se detiene con `docker compose -p smartpot-demo down` (con `-v` borra también los datos). Más detalle en la [demo local](https://github.com/SmartPotTech/.github/tree/main/docker/demo).
 
 ```bash
 # Sincronizar dependencias con uv
