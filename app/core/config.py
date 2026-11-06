@@ -43,8 +43,12 @@ class TrainerSettings(BaseSettings):
     )
     # Misma zona que usa la API (AI_TIMEZONE) para la hora local de cada lectura.
     ai_timezone: str = "America/Bogota"
-    model_export_onnx: bool = Field(True, description="Export Champion models to signed ONNX format")
-    model_signing_key_path: str | None = Field(None, description="Path to Ed25519 private key")
+    model_export_onnx: bool = Field(True, description="Export Champion models to signed ONNX sidecars")
+    model_signing_key_path: str | None = Field(None, description="Path to the Ed25519 private key")
+    trusted_model_public_key_hex: str | None = Field(
+        None,
+        description="Pinned Ed25519 public key (hex) used to authenticate persisted joblib models",
+    )
 
     # Parámetros de entrenamiento
     learning_min_samples: int = Field(200, ge=50)

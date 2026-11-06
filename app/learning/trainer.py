@@ -192,6 +192,9 @@ def train_classifier(task: str, x: np.ndarray, y: np.ndarray, min_samples: int, 
     if card.samples < min_samples:
         card.reason = f"Insufficient readings with a one-hour future window: {card.samples} of {min_samples}."
         return _keep(card, current)
+    if np.unique(y).size < 2:
+        card.reason = "Only one class is present in the training window: waiting for both positive and negative cases."
+        return _keep(card, current)
     if card.positives < MIN_POSITIVES or negatives < MIN_POSITIVES:
         rare = "positive" if card.positives < MIN_POSITIVES else "negative"
         card.reason = (
@@ -202,16 +205,22 @@ def train_classifier(task: str, x: np.ndarray, y: np.ndarray, min_samples: int, 
 
     cut = _split(card.samples)
     x_train, y_train, x_hold, y_hold = x[:cut], y[:cut], x[cut:], y[cut:]
+    if np.unique(y_train).size < 2 or np.unique(y_hold).size < 2:
+        card.reason = (
+            "One of the time-series folds contains a single class: waiting for both positive and negative cases."
+        )
+        return _keep(card, current)
     folds = TimeSeriesSplit(n_splits=4)
-    with _quiet():
-        for name, model in CLASSIFIERS.items():
-            scores = cross_val_score(
-                _pipeline(model), x_train, y_train, cv=folds, scoring="f1_macro", error_score=np.nan
-            )
-            card.candidates.append(Candidate(name, _round(np.nanmean(scores)), _round(np.nanstd(scores))))
-        best = _best(card.candidates, higher=True)
-        tuned = _tune(best.model, CLASSIFIERS, CLASSIFIER_GRIDS, x_train, y_train, "f1_macro")
-        baseline = _pipeline(CLASSIFIERS[BASELINE]).fit(x_train, y_train)
+    try:
+        with _quiet():
+            for name, model in CLASSIFIERS.items():
+                scores = cross_val_score(
+                    _pipeline(model), x_train, y_train, cv=folds, scoring="f1_macro", error_score=np.nan
+                )
+                card.candidates.append(Candidate(name, _round(np.nanmean(scores)), _round(np.nanstd(scores))))
+            best = _best(card.candidates, higher=True)
+            tuned = _tune(best.model, CLASSIFIERS, CLASSIFIER_GRIDS, x_train, y_train, "f1_macro")
+            baseline = _pipeline(CLASSIFIERS[BASELINE]).fit(x_train, y_train)
         card.baseline = _round(f1_score(y_hold, baseline.predict(x_hold), average="macro", zero_division=0))
         card.holdout = _round(f1_score(y_hold, tuned.predict(x_hold), average="macro", zero_division=0))
         rival = (
@@ -219,6 +228,9 @@ def train_classifier(task: str, x: np.ndarray, y: np.ndarray, min_samples: int, 
             if current and current.usable
             else None
         )
+    except (ValueError, ArithmeticError) as error:
+        card.reason = f"Model selection could not be completed: {error}"
+        return _keep(card, current)
 
     return _decide(card, best, tuned, x, y, current, rival, higher=True)
 

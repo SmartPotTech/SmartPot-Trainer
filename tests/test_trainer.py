@@ -18,6 +18,16 @@ def test_train_insufficient_samples():
     assert "Insufficient readings" in card.reason
 
 
+def test_train_classifier_with_a_single_class_stays_pending():
+    rng = np.random.default_rng(7)
+    x = rng.normal(size=(300, 10))
+    y = np.ones(300)
+    card = train_classifier("needs_water", x, y, min_samples=100, current=None)
+    assert card.status == "PENDING"
+    assert "one class" in card.reason.lower()
+    assert card.estimator is None
+
+
 def test_train_states():
     rng = np.random.default_rng(42)
     # 100 lecturas en dos grupos claros

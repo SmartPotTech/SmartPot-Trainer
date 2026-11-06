@@ -14,10 +14,12 @@ def require_service_token(
     settings: Annotated[TrainerSettings, Depends(get_settings)],
 ) -> None:
     """Internal service guard: only the API and SmartPot-AI with the shared token may access it."""
-    if credentials is None or not (
-        secrets.compare_digest(credentials.credentials, settings.smartpot_trainer_token)
-        or (settings.smartpot_ai_token and secrets.compare_digest(credentials.credentials, settings.smartpot_ai_token))
-    ):
+    # compare_digest sobre bytes: una cabecera no ASCII debe dar 401, nunca un TypeError/500.
+    supplied = credentials.credentials.encode("utf-8") if credentials is not None else b""
+    accepted = [settings.smartpot_trainer_token.encode("utf-8")]
+    if settings.smartpot_ai_token:
+        accepted.append(settings.smartpot_ai_token.encode("utf-8"))
+    if credentials is None or not any(secrets.compare_digest(supplied, token) for token in accepted):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid service token",

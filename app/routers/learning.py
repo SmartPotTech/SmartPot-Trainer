@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from starlette.concurrency import run_in_threadpool
 
 from app.core.security import require_service_token
@@ -68,7 +68,10 @@ async def train(payload: TrainRequest, request: Request) -> LearningStatus:
     summary="Forget a crop",
     description="Deletes stored readings for a removed crop to preserve privacy and prevent bias.",
 )
-def forget(crop_id: str, request: Request) -> dict[str, int]:
+def forget(
+    request: Request,
+    crop_id: str = Path(..., pattern=r"^[0-9a-f]{24}$"),
+) -> dict[str, int]:
     return {"deleted": _service(request).forget(crop_id)}
 
 

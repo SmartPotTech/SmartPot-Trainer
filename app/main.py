@@ -32,6 +32,7 @@ def create_app() -> FastAPI:
                 timezone=settings.ai_timezone,
                 model_export_onnx=settings.model_export_onnx,
                 model_signing_key_path=settings.model_signing_key_path,
+                trusted_model_public_key_hex=settings.trusted_model_public_key_hex,
             )
         )
         app.state.service.start()

@@ -18,7 +18,7 @@ import numpy as np
 import sklearn
 
 from app.knowledge.profiles import PROFILES, get_profile
-from app.learning.exporter import export_crop_models, get_or_create_signing_key
+from app.learning.exporter import export_crop_models, get_or_create_signing_key, verify_manifest
 from app.learning.features import build, to_store
 from app.learning.lora import LowRankCropAdapter
 from app.learning.quality import assess
@@ -62,12 +62,13 @@ class TrainerConfig:
     timezone: str = "America/Bogota"
     model_export_onnx: bool = True
     model_signing_key_path: str | None = None
+    trusted_model_public_key_hex: str | None = None
 
 
 def fit_type(crop_type: str, series: Series, min_samples: int, current: TypeState | None) -> TypeState:
     """Full training pipeline for a crop species (can run in an isolated spawned process)."""
     profile = get_profile(crop_type)
-    report = assess(series.values)
+    report = assess(series.values, series.times, series.crops)
     clean = series.subset(report.keep)
     dataset = build(profile, clean)
     models = train_all(dataset, min_samples, dict(current.cards) if current else {})
@@ -93,10 +94,11 @@ class TrainerService:
         self.config = config
         self.store = ReadingStore(config.data_dir, database_url=config.database_url, timezone=config.timezone)
         self.models_dir = Path(config.data_dir) / "models" if self.store.persistent else None
+        # La clave privada vive fuera de /data/models y nunca en el volumen que lee la IA.
         key_path = (
             Path(config.model_signing_key_path)
             if config.model_signing_key_path
-            else (self.models_dir / "ed25519_private.pem" if self.models_dir else None)
+            else (Path(config.data_dir) / "keys" / "ed25519_private.pem" if config.data_dir else None)
         )
         self._signing_key = get_or_create_signing_key(key_path)
         self.types: dict[str, TypeState] = {}
@@ -228,20 +230,39 @@ class TrainerService:
         joblib.dump({"sklearn": sklearn.__version__, "state": state}, temporary)
         temporary.replace(target)
 
-        if self.config.model_export_onnx:
-            try:
-                export_crop_models(self.models_dir, crop_type, state, self._signing_key)
-            except Exception as error:  # noqa: BLE001
-                log.warning("Failed to export signed ONNX models for %s: %s", crop_type, error)
+        # El paquete nativo se exporta siempre: es el contrato que consume SmartPot-AI.
+        export_crop_models(
+            self.models_dir,
+            crop_type,
+            state,
+            self._signing_key,
+            min_samples=self.config.min_samples,
+            onnx=self.config.model_export_onnx,
+            trusted_public_key_hex=self.config.trusted_model_public_key_hex,
+        )
 
     def _load(self) -> None:
         if self.models_dir is None or not self.models_dir.exists():
             return
+        trusted = self.config.trusted_model_public_key_hex
+        if not trusted:
+            log.info("SmartPot-Trainer: persisted joblib loading disabled without TRUSTED_MODEL_PUBLIC_KEY_HEX")
+            return
         for path in self.models_dir.glob("*.joblib"):
+            # Solo se reconstruyen especies conocidas: un archivo suelto nunca se deserializa.
+            if path.stem not in PROFILES:
+                continue
+            manifest = self.models_dir / f"{path.stem}_manifest.json"
+            if not verify_manifest(manifest, expected_public_key_hex=trusted):
+                log.warning("SmartPot-Trainer: refusing to deserialize unverified %s", path.name)
+                continue
             try:
                 saved = joblib.load(path)
             except Exception as error:  # noqa: BLE001
                 log.warning("Could not load %s: %s", path.name, error)
+                continue
+            if not isinstance(saved, dict) or "state" not in saved:
+                log.warning("Ignoring malformed model state in %s", path.name)
                 continue
             if saved.get("sklearn") != sklearn.__version__:
                 log.info(

@@ -62,6 +62,27 @@ def test_quality_outliers_and_invalid():
     assert not report.keep[2]
 
 
+def test_quality_rejects_physically_impossible_temporal_jumps():
+    rng = np.random.default_rng(11)
+    n = 160
+    values = np.column_stack(
+        [
+            rng.uniform(20.0, 22.0, n),
+            rng.uniform(60.0, 65.0, n),
+            rng.uniform(500.0, 600.0, n),
+            rng.uniform(6.0, 6.2, n),
+            rng.uniform(700.0, 720.0, n),
+            rng.uniform(1012.0, 1014.0, n),
+            rng.uniform(70.0, 72.0, n),
+        ]
+    )
+    values[80, 0] += 9.0  # +9 °C en cuatro minutos
+    times = 1_790_000_000.0 + np.arange(n) * 240.0
+    report = assess(values, times)
+    assert not report.keep[80]
+    assert report.outliers >= 1
+
+
 def test_quality_parity_polars_and_fallback():
     rng = np.random.default_rng(123)
     n = 300

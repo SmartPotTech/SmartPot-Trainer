@@ -13,6 +13,13 @@ def test_auth_protection(client):
     res = client.get("/v1/learning/status", headers={"Authorization": "Bearer bad-token"})
     assert res.status_code == 401
 
+    # Una cabecera no ASCII debe fallar cerrada con 401, nunca con 500.
+    res = client.get(
+        "/v1/learning/status",
+        headers=[(b"authorization", "Bearer café".encode())],
+    )
+    assert res.status_code == 401
+
 
 def test_learning_endpoints(client, auth):
     # Status inicial
@@ -24,7 +31,7 @@ def test_learning_endpoints(client, auth):
     payload = {
         "readings": [
             {
-                "cropId": "crop-api-test",
+                "cropId": "66f5a1000000000000000101",
                 "cropType": "LETTUCE",
                 "measuredAt": "2026-10-31T12:00:00Z",
                 "localHour": 12,
@@ -47,9 +54,13 @@ def test_learning_endpoints(client, auth):
     assert data["stored"] == 1
 
     # Olvido de cultivo
-    res = client.delete("/v1/learning/crops/crop-api-test", headers=auth)
+    res = client.delete("/v1/learning/crops/66f5a1000000000000000101", headers=auth)
     assert res.status_code == 200
     assert res.json()["deleted"] >= 1
+
+    # Un identificador que no es ObjectId se rechaza antes de tocar el almacén.
+    res = client.delete("/v1/learning/crops/crop-api-test", headers=auth)
+    assert res.status_code == 422
 
     # Poda
     res = client.post("/v1/learning/prune", headers=auth)
