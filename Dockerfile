@@ -35,8 +35,9 @@ WORKDIR /app
 
 COPY --from=build /app /app
 
-# Lecturas y modelos aprendidos compartidos: aquí se monta el volumen ai_data
-RUN mkdir -p /data && chown 1000:1000 /data
+# Lecturas y modelos aprendidos compartidos: aquí se monta el volumen ai_data.
+# /data/keys existe en la imagen para que el volumen trainer_keys herede el UID 1000 y el Trainer pueda crear la clave.
+RUN mkdir -p /data/keys && chown -R 1000:1000 /data
 
 USER 1000:1000
 
