@@ -144,6 +144,10 @@ docker pull ghcr.io/smartpottech/smartpot-trainer:latest
 | Fast LoRA path & deep Champion-Challenger path | Implemented |
 | Signed native export | `smartpot.learned-models/1` JSON, 16 controls, BLAKE2b hashes, and Ed25519 manifest signature (ONNX is an optional sidecar) |
 
+### 7. Interactive Diagrams
+
+The [interactive diagrams](docs/diagrams/interactive/README.md#english) trace the learning cycle from TimescaleDB to the signed package that SmartPot-AI reloads, in English and Spanish, with links to the exact source lines.
+
 ---
 
 <a id="español"></a>
@@ -285,3 +289,7 @@ docker pull ghcr.io/smartpottech/smartpot-trainer:latest
 | Pipeline en Polars | Filtrado, ventanas móviles y etiquetas autosupervisadas |
 | Ruta rápida LoRA y ruta profunda campeón-retador | En el código |
 | Exportación nativa firmada | JSON smartpot.learned-models/1, 16 controles, hashes BLAKE2b y firma Ed25519 del manifiesto (ONNX es un sidecar opcional) |
+
+### 7. Diagramas interactivos
+
+Los [diagramas interactivos](docs/diagrams/interactive/README.md#español) siguen el ciclo de aprendizaje desde TimescaleDB hasta el paquete firmado que recarga SmartPot-AI, en español e inglés, con enlaces a las líneas exactas del código.
