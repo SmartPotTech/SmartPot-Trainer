@@ -77,8 +77,9 @@ def test_unknown_crop_type_never_reaches_timescale():
 
 def test_species_only_in_the_local_store_still_count_and_train(monkeypatch):
     """Las lecturas ingeridas para una especie ausente de TimescaleDB deben contar y entrenar."""
-    import polars as pl
     from dataclasses import replace
+
+    import polars as pl
 
     store = ReadingStore(None, database_url="postgresql://invalid", timezone="UTC")
     pepper = [replace(item, crop_type="PEPPER") for item in lettuce_series("pot-pepper", days=1.0)]
