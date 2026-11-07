@@ -151,11 +151,20 @@ class ReadingStore:
                 "EXTRACT(EPOCH FROM MAX(r.measured_at))::double precision AS last_received "
                 f"FROM readings r JOIN crops c ON r.crop_id = c.id WHERE {_REAL_ONLY} GROUP BY c.type"
             )
-            if df is not None and not df.is_empty():
-                return {
+            if df is not None:
+                counts = {
                     row[0]: {"readings": row[1], "crops": row[2], "last_received": row[3]} for row in df.iter_rows()
                 }
+                # Una especie puede existir solo en el almacén local (ingesta explícita o
+                # TimescaleDB caída). Si no está en la base, sus lecturas locales son la
+                # única fuente y también deben contar para el estado y el entrenamiento.
+                for crop_type, info in self._local_counts().items():
+                    counts.setdefault(crop_type, info)
+                return counts
 
+        return self._local_counts()
+
+    def _local_counts(self) -> dict[str, dict[str, float]]:
         with self._lock:
             rows = self._connection.execute(
                 "SELECT crop_type, COUNT(*), COUNT(DISTINCT crop_key), MAX(received_at) FROM readings "

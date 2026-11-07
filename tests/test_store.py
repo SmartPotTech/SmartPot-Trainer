@@ -73,3 +73,29 @@ def test_timezone_rejects_sql_injection():
 def test_unknown_crop_type_never_reaches_timescale():
     store = ReadingStore(None, database_url="postgresql://invalid", timezone="UTC")
     assert store.load_df("LETTUCE' OR '1'='1", 10).is_empty()
+
+
+def test_species_only_in_the_local_store_still_count_and_train(monkeypatch):
+    """Las lecturas ingeridas para una especie ausente de TimescaleDB deben contar y entrenar."""
+    import polars as pl
+    from dataclasses import replace
+
+    store = ReadingStore(None, database_url="postgresql://invalid", timezone="UTC")
+    pepper = [replace(item, crop_type="PEPPER") for item in lettuce_series("pot-pepper", days=1.0)]
+    store.add(pepper)
+
+    def fake_adbc(query: str):
+        # La consulta de conteos ve LETTUCE en la base; la carga de PEPPER no tiene filas
+        # y debe caer al almacén local.
+        if "GROUP BY c.type" in query:
+            return pl.DataFrame(
+                {"crop_type": ["LETTUCE"], "readings": [10], "crops": [1], "last_received": [1_700_000_000.0]}
+            )
+        return pl.DataFrame()
+
+    monkeypatch.setattr(store, "_adbc", fake_adbc)
+    counts = store.counts()
+    assert counts["LETTUCE"]["readings"] == 10
+    assert counts["PEPPER"]["readings"] == len(pepper)
+    assert not store.load_df("PEPPER", limit=50).is_empty()
+    store.close()

@@ -57,9 +57,11 @@ async def train(payload: TrainRequest, request: Request) -> LearningStatus:
     service = _service(request)
     crop_types = [payload.crop_type.upper()] if payload.crop_type else service.due()
     for crop_type in crop_types:
-        if crop_type not in service.counts():
+        # La comprobación se apoya en el resultado real del entrenamiento: `train`
+        # devuelve None si no hay serie (ni en TimescaleDB ni en el almacén local).
+        state = await run_in_threadpool(service.train, crop_type)
+        if state is None:
             raise HTTPException(status_code=404, detail=f"No readings for {crop_type}")
-        await run_in_threadpool(service.train, crop_type)
     return LearningStatus.model_validate(service.status())
 
 
