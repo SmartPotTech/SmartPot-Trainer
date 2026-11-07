@@ -81,6 +81,4 @@ def forget(
     description="Removes readings exceeding the retention window or per-species row cap.",
 )
 def prune(request: Request) -> dict[str, int]:
-    service = _service(request)
-    removed = service.store.prune(service.config.retention_days, service.config.max_rows)
-    return {"removed": removed}
+    return {"removed": _service(request).prune()}

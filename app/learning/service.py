@@ -154,6 +154,13 @@ class TrainerService:
         self._counts = (0.0, {})
         return removed
 
+    def prune(self) -> int:
+        """Deletes readings outside the retention window or above the row cap and refreshes counts."""
+        removed = self.store.prune(self.config.retention_days, self.config.max_rows)
+        self._counts = (0.0, {})
+        self._pruned_at = time.time()
+        return removed
+
     def counts(self) -> dict[str, dict]:
         cached_at, counts = self._counts
         if time.time() - cached_at > COUNTS_TTL:
