@@ -26,6 +26,45 @@ The manifest declares the BLAKE2b-256 hash of the bundle and is signed with Ed25
 - Data quality adds physically impossible per-minute jumps in temperature, humidity and substrate, plus an Isolation Forest secondary filter before building the training set.
 - `DELETE /v1/learning/crops/{crop_id}` requires a 24-character lowercase ObjectId hex; non-ASCII Bearer headers return 401.
 
+### Training & Ingestion Pipeline Diagram
+
+```mermaid
+flowchart TB
+  subgraph ingest["Data Ingestion via ADBC (PyArrow 26.0.1)"]
+    direction TB
+    db[("SmartPot-DB (TimescaleDB)<br/>View: trainer_readings<br/>Role: smartpot_reader")]
+    adbc["Arrow ADBC PostgreSQL Driver<br/>Zero-copy column record batches<br/>Pseudonymous real crops only"]
+    polars["Polars 2.1.0 DataFrame<br/>Fast in-memory feature engineering"]
+    db --> adbc --> polars
+  end
+
+  subgraph training["Continual ML Training (Scikit-learn 1.9.1)"]
+    direction TB
+    prep["Feature Matrix (15-min rolling means & trends)<br/>TimeSeriesSplit Cross-Validation (5 folds)"]
+    models["Candidate Model Tournament<br/>RandomForest · HistGradientBoosting<br/>MLPClassifier · Ridge · LogisticRegression"]
+    eval["Model Selection Gatekeeper<br/>Requires higher F1/R2 than baseline<br/>Monoclass safeguard verification"]
+    polars --> prep --> models --> eval
+  end
+
+  subgraph export["Model Signing & Delivery"]
+    direction TB
+    ast["Clean JSON AST Export<br/>Zero pickle serialization<br/>Direct tree and weight structures"]
+    sign["Cryptographic Signing<br/>Ed25519 Signature + BLAKE2b Digest"]
+    notify["Webhook Dispatch<br/>POST /v1/models/reload<br/>Bearer Token Authentication"]
+    eval --> ast --> sign --> notify
+  end
+
+  ai["SmartPot-AI (Rust 1.88+ Engine)<br/>Atomic Model Hot-Reload"]
+  notify --> ai
+
+  classDef core fill:#067A52,stroke:#0B3D2B,color:#FFFFFF
+  classDef leaf fill:#DDF5EA,stroke:#067A52,color:#17261F
+  classDef water fill:#E3F2FB,stroke:#1F6FA0,color:#17261F
+
+  class db,ai core
+  class adbc,polars,prep,models,eval,ast,sign,notify leaf
+```
+
 <a id="español"></a>
 
 ## Español
