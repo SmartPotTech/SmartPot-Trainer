@@ -80,7 +80,7 @@ PROFILES: dict[str, CropProfile] = {
         _profile(
             "LETTUCE",
             "Lettuce",
-            "Cool-weather leafy green; bolts under heat and excessive light.",
+            "Cool-weather leafy green; bolts under excessive heat and light.",
             (15, 22),
             (50, 70),
             (300, 1400),
@@ -91,7 +91,7 @@ PROFILES: dict[str, CropProfile] = {
         _profile(
             "TOMATO",
             "Tomato",
-            "Fruiting crop demanding high light, warmth, and nutrients during flowering.",
+            "Fruit crop demanding in light, warmth, and nutrients during flowering.",
             (20, 28),
             (60, 80),
             (600, 1800),
@@ -135,7 +135,7 @@ PROFILES: dict[str, CropProfile] = {
         _profile(
             "PEPPER",
             "Bell pepper",
-            "Warm-weather fruiting crop; requires intense light and stable pH.",
+            "Warm-weather fruit crop; requires intense light and stable pH.",
             (21, 29),
             (50, 70),
             (600, 1800),
