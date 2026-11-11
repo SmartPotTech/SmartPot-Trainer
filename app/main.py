@@ -6,6 +6,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
+from app.core.cpu import SELECTED_RUNTIME
 from app.learning.service import TrainerConfig, TrainerService
 from app.routers import health, learning
 
@@ -13,6 +14,11 @@ from app.routers import health, learning
 def create_app() -> FastAPI:
     settings = get_settings()
     logging.basicConfig(level=settings.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s - %(message)s")
+
+    if SELECTED_RUNTIME == "compat":
+        logging.info("CPU lacks AVX2/FMA: progressive fallback activated using polars-runtime-compat")
+    elif SELECTED_RUNTIME == "32":
+        logging.info("CPU supports AVX2/FMA: maximum performance Polars runtime active")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

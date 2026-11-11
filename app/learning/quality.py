@@ -13,7 +13,12 @@ The Data Quality Score (DQS) is the product of completeness, validity, and the f
 from dataclasses import dataclass
 
 import numpy as np
-import polars as pl
+
+try:
+    import polars as pl
+except Exception:
+    pl = None  # type: ignore[assignment]
+
 from sklearn.ensemble import IsolationForest
 
 from app.learning.store import COLUMNS
@@ -194,10 +199,11 @@ def assess(values: np.ndarray, times: np.ndarray | None = None, crops: np.ndarra
     if rows == 0:
         return QualityReport(0, 0.0, 0.0, 0, 0.0, np.zeros(0, dtype=bool))
 
-    try:
-        return assess_polars(values, times, crops)
-    except Exception:
-        pass
+    if pl is not None:
+        try:
+            return assess_polars(values, times, crops)
+        except Exception:
+            pass
 
     present = ~np.isnan(values)
     valid = np.ones_like(present)

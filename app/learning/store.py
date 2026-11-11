@@ -15,7 +15,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-import polars as pl
+
+try:
+    import polars as pl
+except Exception:
+    pl = None  # type: ignore[assignment]
 
 from app.knowledge.profiles import PROFILES
 
@@ -206,14 +210,35 @@ class ReadingStore:
 
     def load(self, crop_type: str, limit: int) -> Series:
         """Loads the `limit` most recent readings for the species, sorted by crop and timestamp."""
-        df = self.load_df(crop_type, limit)
-        if df.is_empty():
+        if pl is not None:
+            try:
+                df = self.load_df(crop_type, limit)
+                if df.is_empty():
+                    empty = np.empty(0)
+                    return Series(np.empty(0, dtype=object), empty, empty, np.empty((0, len(COLUMNS))))
+                crops = df["crop_key"].to_numpy()
+                times = df["measured_at"].to_numpy()
+                hours = df["local_hour"].cast(pl.Float64).to_numpy()
+                values = df.select(COLUMNS).to_numpy()
+                return Series(crops, times, hours, values)
+            except Exception as err:
+                log.warning("Polars load failed (%s); falling back to direct SQL", err)
+
+        columns = ", ".join(COLUMNS)
+        query = (
+            f"SELECT crop_key, measured_at, local_hour, {columns} FROM "
+            f"(SELECT * FROM readings WHERE crop_type = ? ORDER BY measured_at DESC LIMIT ?) "
+            f"ORDER BY crop_key, measured_at"
+        )
+        with self._lock:
+            rows = self._connection.execute(query, (crop_type, limit)).fetchall()
+        if not rows:
             empty = np.empty(0)
             return Series(np.empty(0, dtype=object), empty, empty, np.empty((0, len(COLUMNS))))
-        crops = df["crop_key"].to_numpy()
-        times = df["measured_at"].to_numpy()
-        hours = df["local_hour"].cast(pl.Float64).to_numpy()
-        values = df.select(COLUMNS).to_numpy()
+        crops = np.array([r[0] for r in rows], dtype=object)
+        times = np.array([r[1] for r in rows], dtype=np.float64)
+        hours = np.array([r[2] for r in rows], dtype=np.float64)
+        values = np.array([r[3:] for r in rows], dtype=np.float64)
         return Series(crops, times, hours, values)
 
     def forget(self, crop_id: str) -> int:
