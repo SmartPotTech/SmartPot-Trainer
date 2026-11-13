@@ -258,7 +258,8 @@ def train_regressor(x: np.ndarray, y: np.ndarray, min_samples: int, current: Mod
             card.candidates.append(Candidate(name, _round(np.nanmean(scores)), _round(np.nanstd(scores))))
         best = _best(card.candidates, higher=False)
         tuned = _tune(best.model, REGRESSORS, REGRESSOR_GRIDS, x_train, y_train, "neg_mean_absolute_error")
-        card.baseline = _round(mean_absolute_error(y_hold, np.zeros_like(y_hold)))
+        baseline = _pipeline(REGRESSORS[BASELINE]).fit(x_train, y_train)
+        card.baseline = _round(mean_absolute_error(y_hold, baseline.predict(x_hold)))
         card.holdout = _round(mean_absolute_error(y_hold, tuned.predict(x_hold)))
         rival = (
             _round(mean_absolute_error(y_hold, current.estimator.predict(x_hold)))

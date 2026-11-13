@@ -189,29 +189,49 @@ class ReadingStore:
         with self._lock:
             return int(self._connection.execute("SELECT COUNT(*) FROM readings").fetchone()[0])
 
+    @staticmethod
+    def _local_load_sql(columns: str) -> str:
+        # Round-robin por cultivo (rn) para que un dispositivo frecuente no desplace a otros.
+        return (
+            f"SELECT crop_key, measured_at, local_hour, {columns} FROM ("
+            f"SELECT crop_key, measured_at, local_hour, {columns} FROM ("
+            f"SELECT *, ROW_NUMBER() OVER (PARTITION BY crop_key ORDER BY measured_at DESC) AS rn "
+            f"FROM readings WHERE crop_type = ?"
+            f") ORDER BY rn, measured_at DESC LIMIT ?"
+            f") ORDER BY crop_key, measured_at"
+        )
+
     def load_df(self, crop_type: str, limit: int) -> pl.DataFrame:
         """Loads the `limit` most recent readings for the species directly into a Polars DataFrame.
         With `database_url`, reads from TimescaleDB via ADBC (real crops only, pseudonymized ID, and local hour);
         otherwise, or on failure, falls back to the local/in-memory SQLite store."""
         if self.database_url and crop_type in PROFILES:
+            cap = max(1, int(limit))
             cols = ", ".join(f"r.{c}" for c in COLUMNS)
+            inner_cols = ", ".join(f"rd.{c}" for c in COLUMNS)
             df = self._adbc(
+                "WITH target_crops AS ("
+                "SELECT c.id FROM crops c "
+                f"WHERE c.type = '{crop_type}' AND {_REAL_ONLY} "
+                "AND EXISTS (SELECT 1 FROM readings rd WHERE rd.crop_id = c.id LIMIT 1)"
+                "), quota AS ("
+                f"SELECT GREATEST(1, CEIL({cap}::double precision / GREATEST(COUNT(*), 1))::integer) AS per_crop "
+                "FROM target_crops"
+                ") "
                 "SELECT LEFT(ENCODE(SHA256(CONVERT_TO(BTRIM(r.crop_id), 'UTF8')), 'hex'), 24) AS crop_key, "
                 "EXTRACT(EPOCH FROM r.measured_at)::double precision AS measured_at, "
                 f"EXTRACT(HOUR FROM r.measured_at AT TIME ZONE '{self.timezone}')::INTEGER AS local_hour, {cols} "
-                f"FROM readings r JOIN crops c ON r.crop_id = c.id "
-                f"WHERE c.type = '{crop_type}' AND {_REAL_ONLY} "
-                f"ORDER BY r.measured_at DESC LIMIT {int(limit)}"
+                "FROM target_crops c CROSS JOIN quota q "
+                "CROSS JOIN LATERAL ("
+                f"SELECT rd.crop_id, rd.measured_at, {inner_cols} "
+                "FROM readings rd WHERE rd.crop_id = c.id ORDER BY rd.measured_at DESC LIMIT q.per_crop"
+                ") r "
+                f"ORDER BY r.measured_at DESC LIMIT {cap}"
             )
             if df is not None and not df.is_empty():
                 return df.sort(["crop_key", "measured_at"])
 
-        columns = ", ".join(COLUMNS)
-        query = (
-            f"SELECT crop_key, measured_at, local_hour, {columns} FROM "
-            f"(SELECT * FROM readings WHERE crop_type = ? ORDER BY measured_at DESC LIMIT ?) "
-            f"ORDER BY crop_key, measured_at"
-        )
+        query = self._local_load_sql(", ".join(COLUMNS))
         with self._lock:
             return pl.read_database(query, self._connection, execute_options={"parameters": (crop_type, limit)})
 
@@ -231,12 +251,7 @@ class ReadingStore:
             except Exception as err:
                 log.warning("Polars load failed (%s); falling back to direct SQL", err)
 
-        columns = ", ".join(COLUMNS)
-        query = (
-            f"SELECT crop_key, measured_at, local_hour, {columns} FROM "
-            f"(SELECT * FROM readings WHERE crop_type = ? ORDER BY measured_at DESC LIMIT ?) "
-            f"ORDER BY crop_key, measured_at"
-        )
+        query = self._local_load_sql(", ".join(COLUMNS))
         with self._lock:
             rows = self._connection.execute(query, (crop_type, limit)).fetchall()
         if not rows:

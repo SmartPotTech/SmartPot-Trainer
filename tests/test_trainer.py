@@ -7,6 +7,7 @@ from app.learning.trainer import (
     train_all,
     train_anomaly,
     train_classifier,
+    train_regressor,
     train_states,
 )
 from tests.learning_data import lettuce_series
@@ -75,3 +76,13 @@ def test_train_all_with_synthetic_series():
     assert models["states"] is not None
     assert models["anomaly"] is not None
     store.close()
+
+
+def test_train_regressor_baseline_uses_mean_not_zero():
+    rng = np.random.default_rng(11)
+    x = rng.normal(size=(80, 10))
+    # Media constante cercana a 25.0 (no 0): un baseline nulo (zeros_like) daría MAE ~25.
+    y = 25.0 + 0.05 * x[:, 0] + rng.normal(scale=0.01, size=80)
+    card = train_regressor(x, y, min_samples=40, current=None)
+    assert card.baseline is not None
+    assert card.baseline < 1.0

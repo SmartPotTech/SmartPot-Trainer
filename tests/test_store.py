@@ -100,3 +100,53 @@ def test_species_only_in_the_local_store_still_count_and_train(monkeypatch):
     assert counts["PEPPER"]["readings"] == len(pepper)
     assert not store.load_df("PEPPER", limit=50).is_empty()
     store.close()
+
+
+def test_load_samples_fairly_across_crops_without_starvation(monkeypatch):
+    from datetime import UTC, datetime
+
+    import polars as pl
+
+    from app.learning.store import StoredReading, crop_key
+
+    store = ReadingStore(None)
+    base_ts = datetime(2026, 11, 1, tzinfo=UTC).timestamp()
+    # Un cultivo muy ruidoso publica más reciente que otro cultivo estable; sin balanceo
+    # uno solo llenaría todo el límite y el otro quedaría sin representación.
+    steady = [
+        StoredReading("crop-steady", "LETTUCE", base_ts + i * 60.0, 10, {"temperature": 21.0})
+        for i in range(20)
+    ]
+    noisy = [
+        StoredReading("crop-noisy", "LETTUCE", base_ts + 5_000.0 + i * 10.0, 11, {"temperature": 22.0})
+        for i in range(60)
+    ]
+    assert store.add(steady + noisy) == 80
+
+    df = store.load_df("LETTUCE", limit=20)
+    assert df.height == 20
+    keys = set(df["crop_key"].to_list())
+    assert keys == {crop_key("crop-steady"), crop_key("crop-noisy")}
+    assert df.filter(pl.col("crop_key") == crop_key("crop-steady")).height == 10
+    assert df.filter(pl.col("crop_key") == crop_key("crop-noisy")).height == 10
+
+    series = store.load("LETTUCE", limit=20)
+    assert len(series) == 20
+    assert set(series.crops.tolist()) == {crop_key("crop-steady"), crop_key("crop-noisy")}
+
+    # Verifica también la ruta TimescaleDB/ADBC: usa CROSS JOIN LATERAL balanceado y sin GROUP BY c.type.
+    captured_queries: list[str] = []
+    remote_store = ReadingStore(None, database_url="postgresql://invalid", timezone="UTC")
+
+    def fake_adbc(query: str):
+        captured_queries.append(query)
+        return None
+
+    monkeypatch.setattr(remote_store, "_adbc", fake_adbc)
+    remote_store.load_df("LETTUCE", limit=20)
+    assert len(captured_queries) == 1
+    assert "CROSS JOIN LATERAL" in captured_queries[0]
+    assert "GROUP BY c.type" not in captured_queries[0]
+    store.close()
+    remote_store.close()
+
