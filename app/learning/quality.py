@@ -162,7 +162,7 @@ def assess_polars(
     if rows == 0:
         return QualityReport(0, 0.0, 0.0, 0, 0.0, np.zeros(0, dtype=bool))
 
-    df = pl.DataFrame(values, schema=list(COLUMNS))
+    df = pl.DataFrame(values, schema=list(COLUMNS)).fill_nan(None)
     present = ~np.isnan(values)
 
     valid_exprs = []
@@ -175,7 +175,13 @@ def assess_polars(
         q1 = column.quantile(0.25, interpolation="linear")
         q3 = column.quantile(0.75, interpolation="linear")
         spread = pl.max_horizontal(q3 - q1, pl.lit(0.02 * (high - low)))
-        outlier_exprs.append(column.is_not_null() & ((column < q1 - IQR_K * spread) | (column > q3 + IQR_K * spread)))
+        outlier_exprs.append(
+            (
+                (column.count() >= 20)
+                & column.is_not_null()
+                & ((column < q1 - IQR_K * spread) | (column > q3 + IQR_K * spread))
+            ).fill_null(False)
+        )
 
     eval_df = (
         df.lazy()

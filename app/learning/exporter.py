@@ -11,6 +11,7 @@ import hmac
 import json
 import logging
 import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -104,16 +105,13 @@ def get_or_create_signing_key(key_path: Path | None = None) -> ed25519.Ed25519Pr
         encryption_algorithm=serialization.NoEncryption(),
     )
     try:
-        key_path.write_bytes(pem)
-        _restrict(key_path, PRIVATE_KEY_MODE)
+        _atomic_write_bytes(key_path, pem, mode=PRIVATE_KEY_MODE)
         public_path = key_path.with_name("ed25519_public.pem")
-        public_path.write_bytes(
-            key.public_key().public_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PublicFormat.SubjectPublicKeyInfo,
-            )
+        public_pem = key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
         )
-        _restrict(public_path, PUBLIC_KEY_MODE)
+        _atomic_write_bytes(public_path, public_pem, mode=PUBLIC_KEY_MODE)
     except OSError as error:
         raise ExportError(f"Could not persist the Ed25519 private key at {key_path}") from error
     return key
@@ -125,6 +123,28 @@ def _restrict(path: Path, mode: int) -> None:
         os.chmod(path, mode)
     except OSError:
         log.debug("Could not apply mode %o to %s", mode, path)
+
+
+def _atomic_write_bytes(path: Path, data: bytes, mode: int | None = None) -> None:
+    """Writes bytes via a same-directory temporary file, fsync, and atomic replace."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if mode is not None:
+            _restrict(tmp_path, mode)
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def _atomic_write_text(path: Path, text: str, mode: int | None = None) -> None:
+    _atomic_write_bytes(path, text.encode("utf-8"), mode=mode)
 
 
 def compute_blake2b(path: Path) -> str:
@@ -143,8 +163,7 @@ def export_model_to_onnx(model: Any, output_path: Path, n_features: int = FEATUR
 
         sample = np.zeros((1, n_features), dtype=np.float32)
         onnx_model = to_onnx(model, sample)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(onnx_model.SerializeToString())
+        _atomic_write_bytes(output_path, onnx_model.SerializeToString())
         return True
     except Exception as error:  # noqa: BLE001
         log.warning("Could not export model %s to ONNX: %s", output_path.name, error)
@@ -169,8 +188,7 @@ def sign_manifest(
     signature = private_key.sign(canonical)
     signed = dict(manifest_data)
     signed["signature_hex"] = signature.hex()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(signed, indent=2, sort_keys=True), encoding="utf-8")
+    _atomic_write_text(output_path, json.dumps(signed, indent=2, sort_keys=True))
     return output_path
 
 
@@ -482,8 +500,7 @@ def export_lora_adapters(adapters: dict[str, Any], output_path: Path) -> bool:
     """Writes the exact `Adapter` shape used by Rust (w0/b0/a/b/bias/updates_count)."""
     try:
         payload = {task: _lora_spec(adapter) for task, adapter in adapters.items()}
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(payload, indent=2, allow_nan=False), encoding="utf-8")
+        _atomic_write_text(output_path, json.dumps(payload, indent=2, allow_nan=False))
         return True
     except (ExportError, OSError, ValueError) as error:
         log.warning("Could not export LoRA adapters to %s: %s", output_path.name, error)
@@ -580,9 +597,9 @@ def export_crop_models(
     bundle = _bundle(state, crop, min_samples)
 
     inference_path = models_dir / f"{crop}_inference.json"
-    inference_path.write_text(
+    _atomic_write_text(
+        inference_path,
         json.dumps(bundle, separators=(",", ":"), ensure_ascii=True, allow_nan=False),
-        encoding="utf-8",
     )
     artifacts: dict[str, dict[str, Any]] = {
         inference_path.name: {

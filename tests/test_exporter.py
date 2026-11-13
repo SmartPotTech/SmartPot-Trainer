@@ -183,6 +183,8 @@ def test_native_export_matches_the_learned_models_contract(tmp_path: Path):
     assert bundle["features"] == 10
     assert bundle["readings_at_training"] == 140
     assert bundle["min_samples"] == 100
+    assert manifest["crop_type"] == "LETTUCE"
+    assert not list(tmp_path.glob("*.tmp"))
     assert len(bundle["checks"]) == 16
     assert len(bundle["cards"]) == 3
     assert all(len(check["x"]) == 10 for check in bundle["checks"])

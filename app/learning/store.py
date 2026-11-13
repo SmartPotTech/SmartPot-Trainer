@@ -89,6 +89,10 @@ class ReadingStore:
         self._source_logged = False
         self._lock = threading.Lock()
         self._connection = sqlite3.connect(self.path or ":memory:", check_same_thread=False)
+        if self.path:
+            self._connection.execute("PRAGMA journal_mode=WAL")
+        self._connection.execute("PRAGMA synchronous=NORMAL")
+        self._connection.execute("PRAGMA busy_timeout=5000")
         self._connection.executescript(SCHEMA)
         self._connection.commit()
 
@@ -151,9 +155,14 @@ class ReadingStore:
     def counts(self) -> dict[str, dict[str, float]]:
         if self.database_url:
             df = self._adbc(
-                "SELECT c.type AS crop_type, COUNT(*) AS readings, COUNT(DISTINCT r.crop_id) AS crops, "
-                "EXTRACT(EPOCH FROM MAX(r.measured_at))::double precision AS last_received "
-                f"FROM readings r JOIN crops c ON r.crop_id = c.id WHERE {_REAL_ONLY} GROUP BY c.type"
+                "SELECT c.type AS crop_type, SUM(s.cnt)::bigint AS readings, "
+                "COUNT(*) FILTER (WHERE s.cnt > 0) AS crops, "
+                "EXTRACT(EPOCH FROM MAX(s.last_at))::double precision AS last_received "
+                "FROM crops c CROSS JOIN LATERAL ("
+                "SELECT COUNT(*) AS cnt, MAX(r.measured_at) AS last_at "
+                "FROM readings r WHERE r.crop_id = c.id"
+                ") s "
+                f"WHERE {_REAL_ONLY} GROUP BY c.type HAVING COALESCE(SUM(s.cnt), 0) > 0"
             )
             if df is not None:
                 counts = {
@@ -187,16 +196,14 @@ class ReadingStore:
         if self.database_url and crop_type in PROFILES:
             cols = ", ".join(f"r.{c}" for c in COLUMNS)
             df = self._adbc(
-                f"SELECT r.crop_id AS crop_key, EXTRACT(EPOCH FROM r.measured_at)::double precision AS measured_at, "
+                "SELECT LEFT(ENCODE(SHA256(CONVERT_TO(BTRIM(r.crop_id), 'UTF8')), 'hex'), 24) AS crop_key, "
+                "EXTRACT(EPOCH FROM r.measured_at)::double precision AS measured_at, "
                 f"EXTRACT(HOUR FROM r.measured_at AT TIME ZONE '{self.timezone}')::INTEGER AS local_hour, {cols} "
                 f"FROM readings r JOIN crops c ON r.crop_id = c.id "
                 f"WHERE c.type = '{crop_type}' AND {_REAL_ONLY} "
                 f"ORDER BY r.measured_at DESC LIMIT {int(limit)}"
             )
             if df is not None and not df.is_empty():
-                df = df.with_columns(
-                    pl.col("crop_key").map_elements(lambda value: crop_key(value.strip()), return_dtype=pl.Utf8)
-                )
                 return df.sort(["crop_key", "measured_at"])
 
         columns = ", ".join(COLUMNS)

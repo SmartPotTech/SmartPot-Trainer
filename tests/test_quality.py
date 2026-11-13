@@ -107,3 +107,29 @@ def test_quality_parity_polars_and_fallback():
     assert rep_polars.outliers == rep_general.outliers
     assert abs(rep_polars.score - rep_general.score) < 1e-4
     np.testing.assert_array_equal(rep_polars.keep, rep_general.keep)
+
+
+def test_quality_polars_keeps_rows_with_nan_missing_sensors():
+    rng = np.random.default_rng(7)
+    n = 60
+    values = np.column_stack(
+        [
+            rng.uniform(19.0, 24.0, n),
+            rng.uniform(55.0, 70.0, n),
+            rng.uniform(400.0, 800.0, n),
+            rng.uniform(5.8, 6.4, n),
+            rng.uniform(650.0, 800.0, n),
+            np.full(n, np.nan),  # atmósfera ausente en todo el lote
+            rng.uniform(60.0, 75.0, n),
+        ]
+    )
+    # Solo 5 muestras de soil_moisture (< 20) presentes, sin NaN que rompa filas
+    values[: n - 5, 6] = np.nan
+
+    rep_polars = assess_polars(values)
+    rep_general = assess(values)
+
+    assert rep_polars.keep.sum() == n
+    assert rep_polars.outliers == rep_general.outliers
+    assert abs(rep_polars.score - rep_general.score) < 1e-4
+    np.testing.assert_array_equal(rep_polars.keep, rep_general.keep)
