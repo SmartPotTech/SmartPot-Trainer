@@ -168,16 +168,27 @@ class TrainerService:
             self._counts = (time.time(), counts)
         return counts
 
+    def _retrain_threshold(self, state: TypeState | None) -> int:
+        if state is None:
+            return self.config.min_samples
+        cards = list(state.cards.values())
+        # Reintentar con menor umbral mientras falten muestras con ventana futura de una hora.
+        if not cards or any(card.status != "TRAINED" and card.samples < self.config.min_samples for card in cards):
+            return min(self.config.retrain_every, max(20, self.config.min_samples // 10))
+        if any(card.status != "TRAINED" for card in cards):
+            return min(self.config.retrain_every, max(50, self.config.min_samples // 2))
+        return self.config.retrain_every
+
     def due(self) -> list[str]:
         due = []
         for crop_type, info in self.counts().items():
+            if crop_type in self.training:
+                continue
             state = self.types.get(crop_type)
             done = state.readings_at_training if state else 0
             fresh = info["readings"] - done
-            if crop_type in self.training:
-                continue
             if (state is None and info["readings"] >= self.config.min_samples) or (
-                state is not None and fresh >= self.config.retrain_every
+                state is not None and fresh >= self._retrain_threshold(state)
             ):
                 due.append(crop_type)
         return due
@@ -195,6 +206,8 @@ class TrainerService:
                 return None
             started = time.time()
             state = self._run(crop_type, series, self.types.get(crop_type))
+            with self._lock:
+                self._counts = (0.0, {})
             state.readings_at_training = self.counts().get(crop_type, {}).get("readings", len(series))
             with self._lock:
                 self.types[crop_type] = state
@@ -339,7 +352,7 @@ class TrainerService:
                     "name": PROFILES[crop_type].name if crop_type in PROFILES else crop_type,
                     "readings": int(info["readings"]),
                     "crops": int(info["crops"]),
-                    "new_since_training": int(info["readings"]) - (state.readings_at_training if state else 0),
+                    "new_since_training": max(0, int(info["readings"]) - (state.readings_at_training if state else 0)),
                     "training": crop_type in self.training,
                     "trained_at": state.trained_at if state else None,
                     "quality": state.quality if state else None,
@@ -353,7 +366,7 @@ class TrainerService:
         return {
             "enabled": True,
             "persistent": self.store.persistent,
-            "stored_readings": self.store.total(),
+            "stored_readings": sum(int(info["readings"]) for info in counts.values()),
             "min_samples": self.config.min_samples,
             "retrain_every": self.config.retrain_every,
             "crop_types": crop_types,

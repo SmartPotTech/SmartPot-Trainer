@@ -252,3 +252,133 @@ def test_prune_refreshes_cached_counts_immediately():
         assert service.counts()["LETTUCE"]["readings"] == 1
         assert service.status()["stored_readings"] == 1
         service.stop()
+
+
+def test_status_derives_stored_readings_from_counts_and_clamps_fresh():
+    with tempfile.TemporaryDirectory() as tmpdir, AIRecorder() as ai:
+        from app.learning.service import TypeState
+        from app.learning.trainer import ModelCard
+
+        service = TrainerService(config_for(tmpdir, ai.url, min_samples=100, retrain_every=50))
+        try:
+            service.store.counts = lambda: {
+                "LETTUCE": {"readings": 203, "crops": 2},
+                "BASIL": {"readings": 17, "crops": 1},
+            }
+            service.types["LETTUCE"] = TypeState(
+                trained_at=time.time(),
+                readings_at_training=250,
+                cards={
+                    "moisture_1h": ModelCard(
+                        task="moisture_1h",
+                        label="Substrate",
+                        metric="mae",
+                        status="PENDING",
+                        reason="wait",
+                        samples=0,
+                    )
+                },
+            )
+            service._counts = (0.0, {})
+
+            status = service.status()
+            assert status["stored_readings"] == 220
+            assert sum(item["readings"] for item in status["crop_types"]) == 220
+            lettuce = next(item for item in status["crop_types"] if item["crop_type"] == "LETTUCE")
+            assert lettuce["new_since_training"] == 0
+        finally:
+            service.stop()
+
+
+def test_due_retries_pending_models_before_retrain_every():
+    with tempfile.TemporaryDirectory() as tmpdir, AIRecorder() as ai:
+        from app.learning.service import TypeState
+        from app.learning.trainer import ModelCard
+
+        service = TrainerService(config_for(tmpdir, ai.url, min_samples=200, retrain_every=300))
+        try:
+            live_readings = 203
+            service.store.counts = lambda: {"LETTUCE": {"readings": live_readings, "crops": 2}}
+
+            def refresh_counts(n: int) -> None:
+                nonlocal live_readings
+                live_readings = n
+                service._counts = (0.0, {})
+
+            def pending_card(task: str, samples: int) -> ModelCard:
+                return ModelCard(
+                    task=task,
+                    label=task,
+                    metric="f1_macro",
+                    status="PENDING",
+                    reason=f"Insufficient readings: {samples} of 200.",
+                    samples=samples,
+                )
+
+            refresh_counts(203)
+            assert "LETTUCE" in service.due()
+            service.types["LETTUCE"] = TypeState(
+                trained_at=time.time(),
+                readings_at_training=203,
+                quality={"rows": 203, "completeness": 0.8571, "validity": 1.0, "outliers": 0, "score": 0.8571},
+                cards={
+                    "needs_water": pending_card("needs_water", 100),
+                    "overheat": pending_card("overheat", 100),
+                    "moisture_1h": pending_card("moisture_1h", 100),
+                },
+            )
+
+            # Con 0 o 7 lecturas nuevas no debe reintentar ni girar en bucle.
+            assert "LETTUCE" not in service.due()
+            refresh_counts(210)
+            assert "LETTUCE" not in service.due()
+
+            # Al alcanzar 20 lecturas nuevas con modelos aún por debajo de min_samples, debe reintentar.
+            refresh_counts(223)
+            assert "LETTUCE" in service.due()
+
+            # Si las tres tarjetas ya superaron el entrenamiento inicial, respeta retrain_every=300.
+            service.types["LETTUCE"].cards = {
+                task: ModelCard(task=task, label=task, metric="f1_macro", status="TRAINED", reason="ok", samples=220)
+                for task in ("needs_water", "overheat", "moisture_1h")
+            }
+            assert "LETTUCE" not in service.due()
+            refresh_counts(502)
+            assert "LETTUCE" not in service.due()
+            refresh_counts(503)
+            assert "LETTUCE" in service.due()
+        finally:
+            service.stop()
+
+
+def test_training_advances_after_horizon_window_with_missing_atmosphere():
+    with tempfile.TemporaryDirectory() as tmpdir, AIRecorder() as ai:
+        service = TrainerService(config_for(tmpdir, ai.url, min_samples=150, retrain_every=300))
+        try:
+            full = lettuce_series("crop-real-1", days=0.16, step_minutes=1.0, seed=7)
+            for item in full:
+                item.values["atmosphere"] = None
+
+            initial = full[:160]
+            assert service.ingest(initial) == 160
+            assert "LETTUCE" in service.due()
+
+            first = service.train("LETTUCE")
+            assert first is not None
+            assert first.quality["completeness"] == 0.8571
+            assert first.cards["moisture_1h"].status == "PENDING"
+            assert first.cards["moisture_1h"].samples > 0
+
+            # Al completar >200 lecturas con ventana futura suficiente, reentrena antes de esperar 300 más.
+            added = service.ingest(full[160:])
+            assert added > 0
+            assert "LETTUCE" in service.due()
+
+            second = service.train("LETTUCE")
+            assert second is not None
+            assert second.cards["moisture_1h"].status == "TRAINED"
+            status = service.status()
+            assert status["stored_readings"] == status["crop_types"][0]["readings"]
+            assert status["crop_types"][0]["new_since_training"] == 0
+        finally:
+            service.stop()
